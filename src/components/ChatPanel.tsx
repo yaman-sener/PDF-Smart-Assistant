@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, Bot, X, Sparkles, Download, Key, ShieldCheck, AlertCircle } from 'lucide-react';
+import { Send, Loader2, Bot, X, Sparkles, Download, Key, ShieldCheck, AlertCircle, MessageSquare } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Message, DocumentDetails } from '../types';
 import { jsPDF } from 'jspdf';
@@ -15,6 +15,7 @@ interface ChatPanelProps {
   setOcrLanguage: (lang: string) => void;
   onOpenApiKeyModal?: () => void;
   isKeyConfigured?: boolean;
+  hasDocument?: boolean;
 }
 
 export function ChatPanel({
@@ -26,10 +27,11 @@ export function ChatPanel({
   ocrLanguage,
   setOcrLanguage,
   onOpenApiKeyModal,
-  isKeyConfigured = true
+  isKeyConfigured = true,
+  hasDocument = false
 }: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([
-    { id: '1', role: 'model', text: 'Merhaba! Ben PDF Asistanınız. Bana belgeyle ilgili sorular sorabilirsiniz.' }
+    { id: '1', role: 'model', text: 'Merhaba! Ben PDF & Belge Asistanınız. Bana belgeyle ilgili dilediğiniz soruları sorabilirsiniz.' }
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -37,9 +39,9 @@ export function ChatPanel({
 
   useEffect(() => {
     setMessages([
-      { id: '1', role: 'model', text: 'Merhaba! Ben PDF Asistanınız. Bana belgeyle ilgili sorular sorabilirsiniz.' }
+      { id: '1', role: 'model', text: 'Merhaba! Ben PDF & Belge Asistanınız. Bana belgeyle ilgili dilediğiniz soruları sorabilirsiniz.' }
     ]);
-  }, [document?.name]);
+  }, [document?.name, document?.displayName]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -47,7 +49,12 @@ export function ChatPanel({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || !document || isLoading) return;
+    if (!input.trim() || !document?.uri || isLoading) {
+      if (!isKeyConfigured) {
+        onOpenApiKeyModal?.();
+      }
+      return;
+    }
 
     const userMessage: Message = { id: Date.now().toString(), role: 'user', text: input };
     setMessages(prev => [...prev, userMessage]);
@@ -65,101 +72,115 @@ export function ChatPanel({
         headers,
         body: JSON.stringify({
           documentUri: document.uri,
-          mimeType: document.mimeType,
-          messages: messages.concat(userMessage).map(m => ({ role: m.role, text: m.text }))
+          mimeType: document.mimeType || 'application/pdf',
+          messages: [...messages, userMessage].map(m => ({
+            role: m.role,
+            text: m.text
+          }))
         })
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        if (response.status === 401 || errorData.error === 'GEMINI_API_KEY_REQUIRED') {
-          if (onOpenApiKeyModal) onOpenApiKeyModal();
-          throw new Error('Gemini API anahtarı gereklidir. Lütfen API anahtarınızı girin.');
+        const errData = await response.json().catch(() => ({}));
+        if (response.status === 401 || errData.error === 'GEMINI_API_KEY_REQUIRED' || errData.error === 'GEMINI_API_KEY_INVALID') {
+          onOpenApiKeyModal?.();
+          throw new Error('Gemini API anahtarınız eksik veya geçersiz. Lütfen anahtarınızı kontrol edin.');
         }
-        throw new Error(errorData.error || errorData.message || `Sunucu hatası: ${response.status}`);
+        throw new Error(errData.message || errData.error || 'Sohbet yanıtı alınamadı');
       }
 
-      if (!response.body) throw new Error('Yanıt akışı bulunamadı.');
+      if (!response.body) throw new Error('Yanıt akışı başlatılamadı');
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let done = false;
+      let streamedText = '';
 
       while (!done) {
         const { value, done: doneReading } = await reader.read();
         done = doneReading;
         if (value) {
           const chunkValue = decoder.decode(value, { stream: true });
-          setMessages(prev => prev.map(msg => 
-            msg.id === modelMessageId ? { ...msg, text: msg.text + chunkValue } : msg
-          ));
+          streamedText += chunkValue;
+          
+          setMessages(prev => 
+            prev.map(msg => 
+              msg.id === modelMessageId 
+                ? { ...msg, text: streamedText }
+                : msg
+            )
+          );
         }
       }
     } catch (error: any) {
       console.error('Chat error:', error);
-      setMessages(prev => prev.map(msg => 
-        msg.id === modelMessageId ? { ...msg, text: `⚠️ Hata: ${error.message}` } : msg
-      ));
+      setMessages(prev => 
+        prev.map(msg => 
+          msg.id === modelMessageId 
+            ? { ...msg, text: error.message || 'Üzgünüm, yanıt oluşturulurken bir hata oluştu.' }
+            : msg
+        )
+      );
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Render text with clickable page links e.g. [Sayfa 5]
   const renderMessageText = (text: string) => {
-    const markdownWithLinks = text.replace(/\[Sayfa (\d+)\]/g, '[Sayfa $1](#page-$1)');
+    // Regex for matching [Sayfa X] or [Sayfa X-Y]
+    const pageRegex = /\[Sayfa\s+(\d+)(?:-(\d+))?\]/g;
+    const parts = [];
+    let lastIndex = 0;
+    let match;
+
+    while ((match = pageRegex.exec(text)) !== null) {
+      // Push text before the match
+      if (match.index > lastIndex) {
+        parts.push(text.substring(lastIndex, match.index));
+      }
+
+      const startPage = parseInt(match[1], 10);
+      const matchText = match[0];
+
+      // Push clickable page badge
+      parts.push(
+        <button
+          key={match.index}
+          onClick={() => onPageClick(startPage)}
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 mx-0.5 text-[10px] font-medium bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/40 rounded border border-indigo-500/30 transition-colors align-baseline"
+          title={`Sayfa ${startPage}'e git`}
+        >
+          {matchText}
+        </button>
+      );
+
+      lastIndex = pageRegex.lastIndex;
+    }
+
+    if (lastIndex < text.length) {
+      parts.push(text.substring(lastIndex));
+    }
+
+    if (parts.length === 0) {
+      return <ReactMarkdown>{text}</ReactMarkdown>;
+    }
 
     return (
-      <ReactMarkdown 
-        components={{
-          a: ({ node, ...props }) => {
-            if (props.href?.startsWith('#page-')) {
-              const pageNum = parseInt(props.href.replace('#page-', ''), 10);
-              return (
-                <button 
-                  onClick={(e) => { e.preventDefault(); onPageClick(pageNum); }}
-                  className="inline-flex items-center mx-1 px-1.5 py-0.5 rounded-md border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 text-[10px] font-semibold hover:bg-indigo-500/20 transition-colors"
-                >
-                  Sayfa {pageNum}
-                </button>
-              );
-            }
-            return <a {...props} className="text-indigo-400 hover:underline" target="_blank" rel="noopener noreferrer" />;
-          }
-        }}
-      >
-        {markdownWithLinks}
-      </ReactMarkdown>
+      <div className="space-y-1">
+        {parts.map((part, index) => (
+          typeof part === 'string' ? <ReactMarkdown key={index} components={{ p: ({ children }) => <span className="inline">{children}</span> }}>{part}</ReactMarkdown> : part
+        ))}
+      </div>
     );
   };
 
-  const exportAsMarkdown = async () => {
+  const exportAsMarkdown = () => {
     if (!actionState?.result) return;
-    
-    if ('showSaveFilePicker' in window) {
-      try {
-        const handle = await (window as any).showSaveFilePicker({
-          suggestedName: 'ai_export.md',
-          types: [{
-            description: 'Markdown File',
-            accept: { 'text/markdown': ['.md'] },
-          }],
-        });
-        const writable = await handle.createWritable();
-        await writable.write(actionState.result);
-        await writable.close();
-        return;
-      } catch (e) {
-        if ((e as Error).name !== 'AbortError') console.error(e);
-        return;
-      }
-    }
-
-    const blob = new Blob([actionState.result], { type: 'text/markdown' });
+    const blob = new Blob([actionState.result], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
-    const a = window.document.createElement('a');
+    const a = document.createElement('a');
     a.href = url;
-    a.download = 'ai_export.md';
+    a.download = `ai_action_${Date.now()}.md`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -168,12 +189,11 @@ export function ChatPanel({
     if (!actionState?.result) return;
     const doc = new jsPDF();
     
-    doc.setFont("helvetica");
-    doc.setFontSize(12);
-    
+    // Simple text wrapping for export
     const splitText = doc.splitTextToSize(actionState.result, 180);
     doc.text(splitText, 15, 20);
-
+    
+    // Try using showSaveFilePicker if available
     if ('showSaveFilePicker' in window) {
       try {
         const blob = doc.output('blob');
@@ -249,13 +269,14 @@ export function ChatPanel({
               <AlertCircle size={14} /> Gemini API Anahtarı Gerekli
             </div>
             <p className="text-[11px] text-amber-300/80 leading-tight">
-              Belgeyle sohbet etmek, özetleme ve çeviri yapmak için API anahtarınızı tanımlayın.
+              Belgeyle sohbet etmek, özetleme ve yapay zeka analizi yapmak için geçerli bir API anahtarı ekleyin.
             </p>
             <button
               onClick={onOpenApiKeyModal}
-              className="w-full py-1.5 px-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-lg text-[10px] transition-colors"
+              className="w-full py-1.5 px-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-lg text-[10px] transition-colors flex items-center justify-center gap-1.5"
             >
-              API Anahtarı Ekle
+              <Key size={12} />
+              <span>API Anahtarı Ekle</span>
             </button>
           </div>
         )}
@@ -263,8 +284,8 @@ export function ChatPanel({
         {isUploading && (
           <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-xl p-3 flex flex-col items-center justify-center text-center shadow-inner">
             <Loader2 size={24} className="animate-spin text-indigo-400 mb-2" />
-            <p className="text-xs font-medium text-slate-200">Yapay Zeka Hazırlanıyor</p>
-            <p className="text-[10px] text-slate-400 mt-1">Belge okunuyor, arka planda chat için hazırlanıyor...</p>
+            <p className="text-xs font-medium text-slate-200">Yapay Zeka Bağlanıyor</p>
+            <p className="text-[10px] text-slate-400 mt-1">Belge Gemini için hazırlanıyor...</p>
           </div>
         )}
 
@@ -363,8 +384,14 @@ export function ChatPanel({
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            disabled={!document || isLoading || isUploading}
-            placeholder={isUploading ? "Belge analiz ediliyor..." : (document ? "Soru sorun..." : "Lütfen bir belge yükleyin...")}
+            disabled={!hasDocument || isLoading}
+            placeholder={
+              !hasDocument
+                ? "Lütfen başlamak için bir belge yükleyin..."
+                : (!isKeyConfigured
+                    ? "Soru sormak için API anahtarınızı girin..."
+                    : (isUploading ? "Belge analiz ediliyor..." : "Soru sorun..."))
+            }
             className="w-full bg-black/40 border border-white/10 rounded-xl p-3 pr-10 text-xs text-slate-200 focus:outline-none focus:border-indigo-500/50 resize-none h-16 placeholder:text-slate-600 custom-scrollbar disabled:opacity-50 transition-all"
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
@@ -375,7 +402,7 @@ export function ChatPanel({
           />
           <button
             type="submit"
-            disabled={!input.trim() || !document || isLoading || isUploading}
+            disabled={!input.trim() || !hasDocument || isLoading}
             className="absolute bottom-2 right-2 p-1.5 rounded-lg bg-indigo-500 text-white hover:bg-indigo-400 disabled:bg-white/10 disabled:text-slate-500 transition-colors"
           >
             <Send size={14} />

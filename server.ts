@@ -121,7 +121,7 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'x-gemini-api-key', 'Authorization']
 }));
 
-// Body Parser with strict size limit to avoid memory exhaustion
+// Body Parser with strict size limit
 app.use(express.json({ limit: '10mb' }));
 
 // Set up Multer for secure file uploads
@@ -330,10 +330,59 @@ app.post('/api/test-key', async (req: Request, res: Response) => {
     }
     return res.status(400).json({ success: false, message: 'API yanıt vermedi.' });
   } catch (error: any) {
+    const errStr = typeof error === 'string' ? error : (error.message || JSON.stringify(error));
+    if (errStr.includes('API key not valid') || errStr.includes('API_KEY_INVALID') || errStr.includes('INVALID_ARGUMENT')) {
+      return res.status(401).json({ error: 'Google Gemini API anahtarı geçersiz veya yetkisiz.' });
+    }
     if (error.message === 'GEMINI_API_KEY_REQUIRED') {
       return res.status(401).json({ error: 'API anahtarı girilmedi veya geçersiz.' });
     }
     return res.status(400).json({ error: 'API anahtarı doğrulanamadı: ' + (error.message || 'Geçersiz anahtar') });
+  }
+});
+
+// API Route: Parse Document Locally for Instant Preview (EPUB, Word, TXT without requiring AI Key)
+app.post('/api/parse-document', upload.single('file'), async (req: Request, res: Response) => {
+  const uploadedPath = req.file?.path;
+  try {
+    if (!req.file || !uploadedPath) {
+      return res.status(400).json({ error: 'Dosya bulunamadı.' });
+    }
+
+    const lowerName = req.file.originalname.toLowerCase();
+    const mimeType = req.file.mimetype;
+    let extractedText = '';
+    let extractedHtml = '';
+
+    if (mimeType === 'application/epub+zip' || lowerName.endsWith('.epub')) {
+      const epubData = parseEpubFile(uploadedPath);
+      extractedText = epubData.text;
+      extractedHtml = epubData.html;
+    } else if (mimeType === 'application/msword' || lowerName.endsWith('.doc')) {
+      const extractor = new WordExtractor();
+      const extracted = await extractor.extract(uploadedPath);
+      extractedText = extracted.getBody();
+    } else if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || lowerName.endsWith('.docx')) {
+      const htmlResult = await mammoth.convertToHtml({ path: uploadedPath });
+      extractedHtml = htmlResult.value;
+      const result = await mammoth.extractRawText({ path: uploadedPath });
+      extractedText = result.value;
+    }
+
+    res.json({
+      success: true,
+      displayName: req.file.originalname,
+      mimeType: req.file.mimetype,
+      extractedText,
+      extractedHtml
+    });
+  } catch (e: any) {
+    console.error('Parse document error:', e);
+    res.status(500).json({ error: 'Belge ayrıştırılamadı: ' + (e.message || 'Bilinmeyen hata') });
+  } finally {
+    if (uploadedPath && fs.existsSync(uploadedPath)) {
+      try { fs.unlinkSync(uploadedPath); } catch {}
+    }
   }
 });
 
@@ -427,10 +476,23 @@ app.post('/api/upload', upload.single('file'), async (req: Request, res: Respons
     });
   } catch (error: any) {
     console.error('Upload Error:', error);
-    if (error.message === 'GEMINI_API_KEY_REQUIRED') {
-      return res.status(401).json({ error: 'GEMINI_API_KEY_REQUIRED', message: 'Gemini API anahtarı gereklidir.' });
+    const errStr = typeof error === 'string' ? error : (error.message || JSON.stringify(error));
+    if (errStr.includes('API key not valid') || errStr.includes('API_KEY_INVALID') || errStr.includes('INVALID_ARGUMENT')) {
+      return res.status(401).json({
+        error: 'GEMINI_API_KEY_INVALID',
+        message: 'Girdiğiniz Google Gemini API anahtarı geçersiz veya yetkisiz. Lütfen geçerli bir anahtar girin.'
+      });
     }
-    res.status(500).json({ error: error.message || 'Belge AI sunucusuna yüklenirken bir hata oluştu.' });
+    if (error.message === 'GEMINI_API_KEY_REQUIRED' || error.status === 401) {
+      return res.status(401).json({
+        error: 'GEMINI_API_KEY_REQUIRED',
+        message: 'Gemini API anahtarı gereklidir.'
+      });
+    }
+    res.status(500).json({
+      error: 'UPLOAD_FAILED',
+      message: 'Belge AI sunucusuna yüklenirken hata oluştu: ' + (error.message || 'Bilinmeyen hata')
+    });
   } finally {
     // Unconditionally cleanup all temporary files from disk
     if (uploadedPath && fs.existsSync(uploadedPath)) {
@@ -500,6 +562,10 @@ Eğer aradıkları bilgi belgede yoksa, bunu kibarca belirt ve tahmin yürütme.
     res.end();
   } catch (error: any) {
     console.error('Chat Error:', error);
+    const errStr = typeof error === 'string' ? error : (error.message || JSON.stringify(error));
+    if (errStr.includes('API key not valid') || errStr.includes('API_KEY_INVALID')) {
+      return res.status(401).json({ error: 'GEMINI_API_KEY_INVALID', message: 'Gemini API anahtarı geçersiz veya yetkisiz.' });
+    }
     if (error.message === 'GEMINI_API_KEY_REQUIRED') {
       return res.status(401).json({ error: 'GEMINI_API_KEY_REQUIRED', message: 'Gemini API anahtarı gereklidir.' });
     }
@@ -550,6 +616,10 @@ app.post('/api/action', async (req: Request, res: Response) => {
     res.end();
   } catch (error: any) {
     console.error('Action Error:', error);
+    const errStr = typeof error === 'string' ? error : (error.message || JSON.stringify(error));
+    if (errStr.includes('API key not valid') || errStr.includes('API_KEY_INVALID')) {
+      return res.status(401).json({ error: 'GEMINI_API_KEY_INVALID', message: 'Gemini API anahtarı geçersiz.' });
+    }
     if (error.message === 'GEMINI_API_KEY_REQUIRED') {
       return res.status(401).json({ error: 'GEMINI_API_KEY_REQUIRED', message: 'Gemini API anahtarı gereklidir.' });
     }

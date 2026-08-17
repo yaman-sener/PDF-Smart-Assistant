@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Upload, FileText, Loader2, Key, ShieldCheck, AlertCircle, Sparkles, BookOpen } from 'lucide-react';
 import { PDFViewer } from './components/PDFViewer';
 import { ChatPanel } from './components/ChatPanel';
@@ -11,6 +11,7 @@ export default function App() {
   const [file, setFile] = useState<File | null>(null);
   const [documentDetails, setDocumentDetails] = useState<DocumentDetails | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [isAiSyncing, setIsAiSyncing] = useState(false);
   const [pageNumber, setPageNumber] = useState(1);
   const [actionState, setActionState] = useState<{ isRunning: boolean, result: string | null, error: string | null } | null>(null);
   const [highlights, setHighlights] = useState<HighlightRect[]>([]);
@@ -24,6 +25,12 @@ export default function App() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
+  const currentFileRef = useRef<File | null>(null);
+
+  // Keep currentFileRef updated
+  useEffect(() => {
+    currentFileRef.current = file;
+  }, [file]);
 
   // Check server configuration, sync cached keys & listen to key changes
   useEffect(() => {
@@ -44,22 +51,23 @@ export default function App() {
       .catch(() => {});
 
     const updateKeyState = () => {
-      setHasUserApiKey(isValidApiKey(getStoredApiKey()));
+      const valid = isValidApiKey(getStoredApiKey());
+      setHasUserApiKey(valid);
+      // If a document is currently loaded but not synced with AI, try syncing now
+      if (valid && currentFileRef.current && (!documentDetails || !documentDetails.uri)) {
+        syncFileWithGemini(currentFileRef.current);
+      }
     };
 
     window.addEventListener('gemini_api_key_changed', updateKeyState);
     return () => window.removeEventListener('gemini_api_key_changed', updateKeyState);
-  }, []);
+  }, [documentDetails]);
 
   const isKeyConfigured = hasUserApiKey || hasServerApiKey;
 
-  const processSelectedFile = async (selectedFile: File) => {
-    setFile(selectedFile);
-    setIsUploading(true);
-    setDocumentDetails(null);
-    setPageNumber(1);
-    setHighlights([]);
-
+  // Sync document with Gemini File API in background for AI Chat & Actions
+  const syncFileWithGemini = async (selectedFile: File) => {
+    setIsAiSyncing(true);
     const formData = new FormData();
     formData.append('file', selectedFile);
 
@@ -71,24 +79,67 @@ export default function App() {
         body: formData,
       });
 
+      const data = await res.json().catch(() => ({}));
+
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        if (res.status === 401 || err.error === 'GEMINI_API_KEY_REQUIRED') {
+        if (res.status === 401 || data.error === 'GEMINI_API_KEY_REQUIRED' || data.error === 'GEMINI_API_KEY_INVALID') {
           setIsApiKeyModalOpen(true);
-          throw new Error('Yapay zeka analizini başlatmak için lütfen Gemini API anahtarınızı girin.');
         }
-        throw new Error(err.error || err.message || 'Yükleme başarısız oldu');
+        console.warn('Gemini AI Sync Notice:', data.message || data.error || 'AI senkronizasyonu tamamlanamadı.');
+        return;
       }
 
-      const data = await res.json();
-      setDocumentDetails(data);
-    } catch (error: any) {
-      console.error('File Upload Error:', error);
-      alert(error.message || 'Dosya yüklenirken bir hata oluştu.');
-      setFile(null);
+      setDocumentDetails(prev => ({
+        ...prev,
+        ...data,
+        displayName: data.displayName || selectedFile.name
+      }));
+    } catch (err) {
+      console.warn('AI Sync Background Error:', err);
     } finally {
-      setIsUploading(false);
+      setIsAiSyncing(false);
     }
+  };
+
+  const processSelectedFile = async (selectedFile: File) => {
+    // 1. Immediately set file so viewer renders it without blocking!
+    setFile(selectedFile);
+    setIsUploading(true);
+    setDocumentDetails(null);
+    setPageNumber(1);
+    setHighlights([]);
+
+    const lowerName = selectedFile.name.toLowerCase();
+    const isEpubOrWord = lowerName.endsWith('.epub') || lowerName.endsWith('.docx') || lowerName.endsWith('.doc');
+
+    // 2. If EPUB or Word, parse content locally via /api/parse-document so user can read immediately
+    if (isEpubOrWord) {
+      try {
+        const parseFormData = new FormData();
+        parseFormData.append('file', selectedFile);
+        const parseRes = await fetch('/api/parse-document', {
+          method: 'POST',
+          body: parseFormData
+        });
+        if (parseRes.ok) {
+          const parsedData = await parseRes.json();
+          setDocumentDetails({
+            name: selectedFile.name,
+            displayName: selectedFile.name,
+            mimeType: parsedData.mimeType,
+            extractedText: parsedData.extractedText,
+            extractedHtml: parsedData.extractedHtml
+          });
+        }
+      } catch (parseErr) {
+        console.error('Local Document Parsing error:', parseErr);
+      }
+    }
+
+    setIsUploading(false);
+
+    // 3. Connect & sync with Gemini for AI features
+    await syncFileWithGemini(selectedFile);
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -97,7 +148,6 @@ export default function App() {
       setFileHandle(null);
       await processSelectedFile(selectedFile);
     }
-    // reset input value so re-selecting same file triggers change
     if (e.target) e.target.value = '';
   };
 
@@ -183,11 +233,11 @@ export default function App() {
 
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));
-        if (response.status === 401 || errData.error === 'GEMINI_API_KEY_REQUIRED') {
+        if (response.status === 401 || errData.error === 'GEMINI_API_KEY_REQUIRED' || errData.error === 'GEMINI_API_KEY_INVALID') {
           setIsApiKeyModalOpen(true);
-          throw new Error('Bu özelliği kullanmak için geçerli bir Gemini API anahtarı girmeniz gerekmektedir.');
+          throw new Error('Bu özelliği kullanmak için lütfen geçerli bir Gemini API anahtarı girin.');
         }
-        throw new Error(errData.error || errData.message || 'İşlem gerçekleştirilemedi');
+        throw new Error(errData.message || errData.error || 'İşlem gerçekleştirilemedi');
       }
 
       if (!response.body) throw new Error('Sunucudan yanıt akışı alınamadı');
@@ -278,7 +328,7 @@ export default function App() {
           <button 
             onClick={() => setIsApiKeyModalOpen(true)}
             className="p-2 rounded-lg text-slate-500 hover:text-slate-300 transition-colors"
-            title={isKeyConfigured ? 'Gemini API Bağlantısı Hazır' : 'API Anahtarı Eksik'}
+            title={isKeyConfigured ? 'Gemini API Bağlantısı Hazır' : 'API Anahtarı Eksik veya Geçersiz'}
           >
             {isKeyConfigured ? <ShieldCheck size={18} className="text-emerald-400/80" /> : <AlertCircle size={18} className="text-amber-400/80" />}
           </button>
@@ -313,11 +363,12 @@ export default function App() {
             onPageClick={setPageNumber} 
             actionState={actionState}
             onCloseAction={() => { setActionState(null); setHighlights([]); }}
-            isUploading={isUploading}
+            isUploading={isUploading || isAiSyncing}
             ocrLanguage={ocrLanguage}
             setOcrLanguage={setOcrLanguage}
             onOpenApiKeyModal={() => setIsApiKeyModalOpen(true)}
             isKeyConfigured={isKeyConfigured}
+            hasDocument={Boolean(file)}
           />
         </div>
       </div>
