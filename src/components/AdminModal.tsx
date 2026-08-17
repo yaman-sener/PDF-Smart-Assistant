@@ -512,8 +512,10 @@ export function AdminModal({ isOpen, onClose }: AdminModalProps) {
                           >
                             {p.id === 'gemini' && (
                               <>
-                                <option value="gemini-2.5-flash">Gemini 2.5 Flash (Hızlı)</option>
-                                <option value="gemini-1.5-pro">Gemini 1.5 Pro (Gelişmiş)</option>
+                                <option value="gemini-2.5-flash">Gemini 2.5 Flash (Önerilen)</option>
+                                <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+                                <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                                <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
                               </>
                             )}
                             {p.id === 'deepseek' && (
@@ -533,8 +535,29 @@ export function AdminModal({ isOpen, onClose }: AdminModalProps) {
                         </div>
                       </div>
 
+                      {/* Optional Base URL (For proxies, OpenRouter, etc.) */}
+                      {p.id !== 'gemini' && (
+                        <div className="mt-2.5">
+                          <details className="group">
+                            <summary className="text-[10px] text-indigo-400/80 cursor-pointer select-none hover:text-indigo-300 transition-colors">
+                              ⚙️ Özel API URL / Proxy Ayarı (İsteğe Bağlı)
+                            </summary>
+                            <div className="mt-2">
+                              <input
+                                type="text"
+                                value={p.baseUrl || ''}
+                                onChange={(e) => updateProviderField(p.id, 'baseUrl', e.target.value)}
+                                placeholder={p.id === 'deepseek' ? 'https://api.deepseek.com/v1' : 'https://api.moonshot.cn/v1'}
+                                className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-[11px] text-slate-300 outline-none font-mono placeholder:text-slate-600"
+                              />
+                              <p className="text-[9px] text-slate-500 mt-1">Varsayılan bırakmak için boş bırakabilirsiniz.</p>
+                            </div>
+                          </details>
+                        </div>
+                      )}
+
                       {/* Test Connection Button & Status */}
-                      <div className="mt-3 pt-3 border-t border-white/5 flex items-center justify-between">
+                      <div className="mt-3 pt-3 border-t border-white/5 flex flex-wrap items-center justify-between gap-2">
                         <button
                           type="button"
                           onClick={() => testProvider(p)}
@@ -546,14 +569,17 @@ export function AdminModal({ isOpen, onClose }: AdminModalProps) {
                         </button>
 
                         {test && (
-                          <div className={`text-[10px] font-medium flex items-center gap-1 ${
+                          <div className={`text-[10px] font-medium flex items-center gap-1 max-w-full ${
                             test.status === 'success' 
                               ? 'text-emerald-400' 
-                              : (test.status === 'error' ? 'text-red-400' : 'text-slate-400')
+                              : test.status === 'error' 
+                              ? 'text-red-400' 
+                              : 'text-slate-400'
                           }`}>
-                            {test.status === 'success' && <Check size={12} />}
-                            {test.status === 'error' && <AlertCircle size={12} />}
-                            <span>{test.message}</span>
+                            {test.status === 'success' && <Check size={12} className="shrink-0" />}
+                            {test.status === 'error' && <AlertCircle size={12} className="shrink-0" />}
+                            <span className="truncate">{test.message}</span>
+                            {test.latency && <span className="text-[9px] text-slate-500">({test.latency}ms)</span>}
                           </div>
                         )}
                       </div>

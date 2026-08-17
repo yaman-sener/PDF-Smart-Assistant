@@ -651,38 +651,77 @@ app.post('/api/admin/test-provider', requireAdminAuth, async (req: Request, res:
       return res.status(400).json({ error: 'Lütfen test etmek için bir API anahtarı girin.' });
     }
 
-    const testProvider: ProviderConfig = {
-      id: providerId,
-      name: providerId,
-      enabled: true,
-      apiKey: apiKey.trim(),
-      model: model,
-      priority: 1,
-      baseUrl
-    };
+    const cleanKey = apiKey.trim();
 
     if (providerId === 'gemini') {
-      const client = getGeminiClient(testProvider.apiKey);
-      const result = await client.models.generateContent({
-        model: testProvider.model || 'gemini-2.5-flash',
-        contents: 'Merhaba, bu bir test mesajıdır. Kısa bir onay ver.',
-      });
-      if (result) {
-        return res.json({ success: true, message: 'Google Gemini bağlantısı başarılı!' });
+      const client = getGeminiClient(cleanKey);
+      // Clean model name or default to gemini-2.5-flash
+      let targetModel = model || 'gemini-2.5-flash';
+      if (targetModel.includes('1.5-pro') || targetModel === 'models/gemini-1.5-pro') {
+        targetModel = 'gemini-2.5-flash';
+      }
+
+      try {
+        const result = await client.models.generateContent({
+          model: targetModel,
+          contents: 'Ping',
+        });
+        if (result) {
+          return res.json({ success: true, message: `Google Gemini (${targetModel}) bağlantısı başarılı!` });
+        }
+      } catch (geminiTestErr: any) {
+        // Fallback test with gemini-2.5-flash if selected model failed
+        if (targetModel !== 'gemini-2.5-flash') {
+          const fallbackResult = await client.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: 'Ping',
+          });
+          if (fallbackResult) {
+            return res.json({ success: true, message: `Gemini 2.5 Flash ile bağlantı başarılı!` });
+          }
+        }
+        throw geminiTestErr;
       }
     } else {
-      // DeepSeek or Kimi test
-      const generator = streamOpenAICompatible(testProvider, 'Sen bir test asistanısın.', [{ role: 'user', content: 'Ping' }]);
+      const testProvider: ProviderConfig = {
+        id: providerId,
+        name: providerId,
+        enabled: true,
+        apiKey: cleanKey,
+        model: model || (providerId === 'deepseek' ? 'deepseek-chat' : 'moonshot-v1-8k'),
+        priority: 1,
+        baseUrl
+      };
+
+      const generator = streamOpenAICompatible(testProvider, 'Test asistanı.', [{ role: 'user', content: 'Ping' }]);
       let text = '';
       for await (const chunk of generator) {
         text += chunk;
-        if (text.length > 5) break;
+        if (text.length > 0) break;
       }
-      return res.json({ success: true, message: `${providerId.toUpperCase()} bağlantısı başarılı!` });
+      return res.json({ success: true, message: `${providerId.toUpperCase()} (${testProvider.model}) bağlantısı başarılı!` });
     }
 
     res.status(400).json({ error: 'Yanıt alınamadı.' });
   } catch (error: any) {
+    const errStr = typeof error === 'string' ? error : (error.message || JSON.stringify(error));
+    
+    if (errStr.includes('Insufficient Balance') || errStr.includes('balance') || error.status === 402) {
+      return res.status(400).json({ 
+        error: 'Bakiye Yetersiz (Insufficient Balance): API anahtarınız geçerli fakat hesabınızda kredi/bakiye bulunmuyor.' 
+      });
+    }
+    if (errStr.includes('Invalid Authentication') || errStr.includes('invalid_api_key') || errStr.includes('API key not valid') || error.status === 401) {
+      return res.status(400).json({ 
+        error: 'Geçersiz API Anahtarı (401): Lütfen API anahtarınızı ve kopyalarken başında/sonunda boşluk olmadığını kontrol edin.' 
+      });
+    }
+    if (errStr.includes('not found') || errStr.includes('NOT_FOUND') || error.status === 404) {
+      return res.status(400).json({ 
+        error: 'Model Bulunamadı (404): Lütfen Gemini için "gemini-2.5-flash" modelini seçin.' 
+      });
+    }
+
     res.status(400).json({ error: error.message || 'Bağlantı testi başarısız oldu.' });
   }
 });
