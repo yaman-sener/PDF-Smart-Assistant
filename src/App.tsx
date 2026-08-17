@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Upload, FileText, Loader2, Key, ShieldCheck, AlertCircle, Sparkles, BookOpen } from 'lucide-react';
+import { Upload, FileText, Loader2, Key, ShieldCheck, AlertCircle, Sparkles, BookOpen, Lock, Sliders, Cpu } from 'lucide-react';
 import { PDFViewer } from './components/PDFViewer';
 import { ChatPanel } from './components/ChatPanel';
 import { FloatingToolbar } from './components/FloatingToolbar';
 import { ApiKeyModal } from './components/ApiKeyModal';
+import { AdminModal } from './components/AdminModal';
 import { DocumentDetails, HighlightRect } from './types';
 import { getStoredApiKey, getApiHeaders, syncApiKeyWithBackend, isValidApiKey } from './lib/apiKeyStorage';
 
@@ -19,6 +20,7 @@ export default function App() {
 
   const [ocrLanguage, setOcrLanguage] = useState('tur');
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
+  const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
   const [hasServerApiKey, setHasServerApiKey] = useState(false);
   const [hasUserApiKey, setHasUserApiKey] = useState(Boolean(getStoredApiKey()));
   const [isDraggingFile, setIsDraggingFile] = useState(false);
@@ -44,7 +46,7 @@ export default function App() {
       .then(res => res.json())
       .then(data => {
         setHasServerApiKey(Boolean(data?.hasServerApiKey));
-        if (data?.hasCachedDiskKey || (data?.cachedKey && isValidApiKey(data.cachedKey))) {
+        if (data?.hasCachedDiskKey || (data?.cachedKey && isValidApiKey(data.cachedKey)) || data?.hasAnyValidKey) {
           setHasUserApiKey(true);
         }
       })
@@ -53,7 +55,6 @@ export default function App() {
     const updateKeyState = () => {
       const valid = isValidApiKey(getStoredApiKey());
       setHasUserApiKey(valid);
-      // If a document is currently loaded but not synced with AI, try syncing now
       if (valid && currentFileRef.current && (!documentDetails || !documentDetails.uri)) {
         syncFileWithGemini(currentFileRef.current);
       }
@@ -82,9 +83,6 @@ export default function App() {
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        if (res.status === 401 || data.error === 'GEMINI_API_KEY_REQUIRED' || data.error === 'GEMINI_API_KEY_INVALID') {
-          setIsApiKeyModalOpen(true);
-        }
         console.warn('Gemini AI Sync Notice:', data.message || data.error || 'AI senkronizasyonu tamamlanamadı.');
         return;
       }
@@ -323,14 +321,15 @@ export default function App() {
           </button>
         </div>
 
-        {/* Bottom Status */}
-        <div className="mt-auto">
-          <button 
-            onClick={() => setIsApiKeyModalOpen(true)}
-            className="p-2 rounded-lg text-slate-500 hover:text-slate-300 transition-colors"
-            title={isKeyConfigured ? 'Gemini API Bağlantısı Hazır' : 'API Anahtarı Eksik veya Geçersiz'}
+        {/* Bottom Status & Admin Lock Button */}
+        <div className="mt-auto flex flex-col gap-3 items-center">
+          {/* Admin Panel Button */}
+          <button
+            onClick={() => setIsAdminModalOpen(true)}
+            className="p-2.5 rounded-xl bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 hover:text-indigo-200 transition-all hover:scale-105 shadow-lg shadow-indigo-500/10"
+            title="Admin & Model Havuzu Yönetimi (Gemini, DeepSeek, Kimi)"
           >
-            {isKeyConfigured ? <ShieldCheck size={18} className="text-emerald-400/80" /> : <AlertCircle size={18} className="text-amber-400/80" />}
+            <ShieldCheck size={18} />
           </button>
         </div>
       </div>
@@ -373,11 +372,17 @@ export default function App() {
         </div>
       </div>
 
-      {/* API Key Modal */}
+      {/* User API Key Modal */}
       <ApiKeyModal 
         isOpen={isApiKeyModalOpen} 
         onClose={() => setIsApiKeyModalOpen(false)} 
         hasServerApiKey={hasServerApiKey}
+      />
+
+      {/* Secure Admin Modal (Gemini, DeepSeek, Kimi Multi-Model Pool) */}
+      <AdminModal
+        isOpen={isAdminModalOpen}
+        onClose={() => setIsAdminModalOpen(false)}
       />
     </div>
   );
