@@ -9,6 +9,7 @@ import multer from 'multer';
 import { GoogleGenAI } from '@google/genai';
 import mammoth from 'mammoth';
 import WordExtractor from 'word-extractor';
+import AdmZip from 'adm-zip';
 import { fileURLToPath } from 'url';
 
 // Helper: Strictly validate if an API key is real and not a dummy placeholder
@@ -129,20 +130,41 @@ if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-// Whitelist allowed MIME types and file extensions
+// Whitelist allowed MIME types and file extensions (PDF, EPUB, Word, Text, Images)
 const ALLOWED_MIME_TYPES = new Set([
   'application/pdf',
+  'application/epub+zip',
+  'application/x-mobipocket-ebook',
   'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'text/plain',
   'text/markdown',
   'text/csv',
+  'text/html',
+  'text/rtf',
+  'application/rtf',
   'image/png',
   'image/jpeg',
-  'image/jpg'
+  'image/jpg',
+  'image/webp'
 ]);
 
-const ALLOWED_EXTENSIONS = new Set(['.pdf', '.doc', '.docx', '.txt', '.md', '.csv', '.png', '.jpg', '.jpeg']);
+const ALLOWED_EXTENSIONS = new Set([
+  '.pdf',
+  '.epub',
+  '.doc',
+  '.docx',
+  '.txt',
+  '.md',
+  '.csv',
+  '.html',
+  '.htm',
+  '.rtf',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.webp'
+]);
 
 const upload = multer({
   dest: uploadDir,
@@ -155,7 +177,7 @@ const upload = multer({
     if (ALLOWED_MIME_TYPES.has(file.mimetype) || ALLOWED_EXTENSIONS.has(ext)) {
       cb(null, true);
     } else {
-      cb(new Error('Desteklenmeyen dosya türü. Yalnızca PDF, Word, Görsel ve Metin dosyaları kabul edilir.'));
+      cb(new Error('Desteklenmeyen dosya türü. PDF, EPUB, Word (.docx, .doc), Markdown, CSV, Metin ve Görseller kabul edilir.'));
     }
   }
 });
@@ -201,6 +223,53 @@ function resolveAiClient(req: Request): GoogleGenAI {
     clientCache.set(apiKey, client);
   }
   return client;
+}
+
+/**
+ * Helper to parse EPUB files and extract clean text & HTML chapters
+ */
+function parseEpubFile(filePath: string): { text: string; html: string } {
+  try {
+    const zip = new AdmZip(filePath);
+    const zipEntries = zip.getEntries();
+
+    const htmlEntries = zipEntries
+      .filter(entry => !entry.isDirectory && /\.(xhtml|html|htm)$/i.test(entry.entryName))
+      .sort((a, b) => a.entryName.localeCompare(b.entryName));
+
+    let fullHtml = '';
+    let fullText = '';
+
+    for (const entry of htmlEntries) {
+      const content = entry.getData().toString('utf-8');
+      const bodyMatch = content.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+      const chapterHtml = bodyMatch ? bodyMatch[1] : content;
+
+      // Extract plain text
+      const chapterText = chapterHtml
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      if (chapterText.length > 0) {
+        fullText += chapterText + '\n\n';
+        fullHtml += `<div class="epub-chapter mb-8 pb-6 border-b border-white/10">\n${chapterHtml}\n</div>`;
+      }
+    }
+
+    return {
+      text: fullText.trim() || 'EPUB içeriği metne dönüştürülemedi.',
+      html: fullHtml.trim() || '<p>EPUB içeriği görüntülenemedi.</p>'
+    };
+  } catch (e: any) {
+    console.error('EPUB Parsing Error:', e);
+    return {
+      text: 'EPUB dosyası ayrıştırılırken hata oluştu: ' + e.message,
+      html: '<p>EPUB ayrıştırma hatası.</p>'
+    };
+  }
 }
 
 // API Route: Check server configuration, cached keys & health
@@ -287,8 +356,19 @@ app.post('/api/upload', upload.single('file'), async (req: Request, res: Respons
 
     const lowerName = req.file.originalname.toLowerCase();
 
-    // Handle older .doc explicitly
-    if (mimeType === 'application/msword' || lowerName.endsWith('.doc')) {
+    // 1. Handle EPUB files (.epub)
+    if (mimeType === 'application/epub+zip' || lowerName.endsWith('.epub')) {
+      const epubData = parseEpubFile(uploadedPath);
+      extractedText = epubData.text;
+      extractedHtml = epubData.html;
+      tempConvertedPath = uploadedPath + '.txt';
+      fs.writeFileSync(tempConvertedPath, extractedText, 'utf-8');
+      filePath = tempConvertedPath;
+      mimeType = 'text/plain';
+    }
+
+    // 2. Handle older .doc explicitly
+    else if (mimeType === 'application/msword' || lowerName.endsWith('.doc')) {
       const extractor = new WordExtractor();
       const extracted = await extractor.extract(uploadedPath);
       extractedText = extracted.getBody();
@@ -298,8 +378,8 @@ app.post('/api/upload', upload.single('file'), async (req: Request, res: Respons
       mimeType = 'text/plain';
     }
 
-    // Handle .docx explicitly
-    if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || lowerName.endsWith('.docx')) {
+    // 3. Handle .docx explicitly
+    else if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || lowerName.endsWith('.docx')) {
       const htmlResult = await mammoth.convertToHtml({ path: uploadedPath });
       extractedHtml = htmlResult.value;
 
@@ -509,7 +589,7 @@ export async function startServer() {
       console.log(`📑 PDF Smart Assistant is running!`);
       console.log(`🌐 Local URL: http://localhost:${PORT}`);
       console.log(`💾 Persistent Key Cache: ${USER_KEY_FILE}`);
-      console.log(`🔒 Security headers & validation enabled`);
+      console.log(`📚 EPUB, Word, PDF & Text Support Enabled`);
       console.log(`========================================\n`);
 
       // Safely open browser in non-dev mode

@@ -3,7 +3,27 @@ import { Document, Page, pdfjs } from 'react-pdf';
 import { useInView } from 'react-intersection-observer';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
-import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, ScanText, Loader2, LayoutGrid, LayoutList, FileText, Search, Save, SaveAll, MessageSquarePlus } from 'lucide-react';
+import { 
+  ChevronLeft, 
+  ChevronRight, 
+  ZoomIn, 
+  ZoomOut, 
+  ScanText, 
+  Loader2, 
+  LayoutGrid, 
+  LayoutList, 
+  FileText, 
+  Search, 
+  Save, 
+  SaveAll, 
+  MessageSquarePlus,
+  Upload,
+  BookOpen,
+  Sparkles,
+  FileCode,
+  Type,
+  Maximize2
+} from 'lucide-react';
 import { createWorker } from 'tesseract.js';
 import { PDFDocument, rgb } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
@@ -31,6 +51,8 @@ interface PDFViewerProps {
   highlights?: HighlightRect[];
   ocrLanguage: string;
   documentDetails?: any;
+  onSelectFile?: () => void;
+  isUploading?: boolean;
 }
 
 type ViewMode = 'single' | 'continuous' | 'two-page';
@@ -68,23 +90,38 @@ function VirtualizedPage({ pageNumber, scale, highlights, onVisible, renderOcrLa
           {renderOcrLayer(pageNumber)}
         </Page>
       ) : (
-        <div className="w-full flex items-center justify-center text-slate-500 bg-white/5 shadow-2xl rounded-lg" style={{ width: 600 * scale, height: 800 * scale }}>
-          Sayfa {pageNumber} Yükleniyor...
+        <div className="w-[595px] h-[842px] bg-white/5 animate-pulse rounded flex items-center justify-center border border-white/10 text-slate-500 text-xs">
+          Sayfa {pageNumber}
         </div>
       )}
     </div>
   );
 }
 
-export function PDFViewer({ file, setFile, fileHandle, setFileHandle, pageNumber, setPageNumber, highlights = [], ocrLanguage, documentDetails }: PDFViewerProps) {
-  const [numPages, setNumPages] = useState<number>(0);
-  const [scale, setScale] = useState<number>(1.2);
+export function PDFViewer({
+  file,
+  setFile,
+  fileHandle,
+  setFileHandle,
+  pageNumber,
+  setPageNumber,
+  highlights = [],
+  ocrLanguage,
+  documentDetails,
+  onSelectFile,
+  isUploading = false
+}: PDFViewerProps) {
+  const [numPages, setNumPages] = useState<number | null>(null);
+  const [scale, setScale] = useState(1.1);
+  const [viewMode, setViewMode] = useState<ViewMode>('single');
+  const [pdfProxy, setPdfProxy] = useState<any>(null);
   const [isOcrRunning, setIsOcrRunning] = useState(false);
   const [ocrProgress, setOcrProgress] = useState<{ current: number, total: number } | null>(null);
-  const [ocrPagesData, setOcrPagesData] = useState<Record<number, OcrWord[]>>({});
-  const [viewMode, setViewMode] = useState<ViewMode>('continuous');
+  const [ocrPagesData, setOcrPagesData] = useState<{ [page: number]: OcrWord[] }>({});
   const [textContent, setTextContent] = useState<string | null>(null);
-  const [pdfProxy, setPdfProxy] = useState<any>(null);
+  const [readerFontSize, setReaderFontSize] = useState<number>(16);
+
+  // Search state
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<number[]>([]);
   const [currentSearchIndex, setCurrentSearchIndex] = useState(0);
@@ -93,7 +130,7 @@ export function PDFViewer({ file, setFile, fileHandle, setFileHandle, pageNumber
   const viewerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (file && (file.type.startsWith('text/') || file.name.endsWith('.md') || file.name.endsWith('.csv'))) {
+    if (file && (file.type.startsWith('text/') || file.name.endsWith('.md') || file.name.endsWith('.csv') || file.name.endsWith('.txt'))) {
       const reader = new FileReader();
       reader.onload = (e) => setTextContent(e.target?.result as string);
       reader.readAsText(file);
@@ -138,223 +175,157 @@ export function PDFViewer({ file, setFile, fileHandle, setFileHandle, pageNumber
           const pages = viewerRef.current?.querySelectorAll('.react-pdf__Page');
           if (pages && viewMode === 'continuous') {
              const targetPage = results[0];
-             const container = viewerRef.current;
-             if (container) {
-                container.scrollTop = (targetPage - 1) * (800 * scale + 32); 
-             }
+             pages[targetPage - 1]?.scrollIntoView({ behavior: 'smooth' });
           }
         }, 100);
-      } else {
-        alert('Kelime bulunamadı.');
       }
-    } catch(err) {
-      console.error(err);
+    } catch (e) {
+      console.error("Search error:", e);
     } finally {
       setIsSearching(false);
     }
   };
 
-  const handleNextSearchResult = () => {
+  const nextSearchResult = () => {
     if (searchResults.length === 0) return;
     const nextIdx = (currentSearchIndex + 1) % searchResults.length;
     setCurrentSearchIndex(nextIdx);
     setPageNumber(searchResults[nextIdx]);
-    
-    setTimeout(() => {
-      if (viewMode === 'continuous' && viewerRef.current) {
-        viewerRef.current.scrollTop = (searchResults[nextIdx] - 1) * (800 * scale + 32); 
-      }
-    }, 100);
   };
 
-  const handleZoomIn = () => setScale((s) => Math.min(s + 0.2, 3));
-  const handleZoomOut = () => setScale((s) => Math.max(s - 0.2, 0.5));
-  const handlePrevPage = () => {
-    if (viewMode === 'two-page') setPageNumber(Math.max(pageNumber - 2, 1));
-    else setPageNumber(Math.max(pageNumber - 1, 1));
-  };
-  const handleNextPage = () => {
-    if (viewMode === 'two-page') setPageNumber(Math.min(pageNumber + 2, numPages));
-    else setPageNumber(Math.min(pageNumber + 1, numPages));
+  const prevSearchResult = () => {
+    if (searchResults.length === 0) return;
+    const prevIdx = (currentSearchIndex - 1 + searchResults.length) % searchResults.length;
+    setCurrentSearchIndex(prevIdx);
+    setPageNumber(searchResults[prevIdx]);
   };
 
-  // Run OCR and populate instant custom HTML layer with fixed alignment
-  const handleOcr = useCallback(async () => {
-    if (!pdfProxy) return;
+  const handleOcr = async () => {
+    if (!pdfProxy || !file || isOcrRunning) return;
+    setIsOcrRunning(true);
+    setOcrProgress({ current: 0, total: pdfProxy.numPages });
+
     try {
-      setIsOcrRunning(true);
-      setOcrProgress({ current: 0, total: numPages });
-      
-      const worker = await createWorker(ocrLanguage, 1, {
-        logger: m => {}
-      });
-      
-      for (let i = 1; i <= numPages; i++) {
-        setOcrProgress({ current: i, total: numPages });
+      const worker = await createWorker(ocrLanguage);
+      const newOcrData: { [page: number]: OcrWord[] } = {};
+
+      for (let i = 1; i <= pdfProxy.numPages; i++) {
+        setOcrProgress({ current: i, total: pdfProxy.numPages });
         const page = await pdfProxy.getPage(i);
-        const viewport = page.getViewport({ scale: 2.0 }); 
+        const viewport = page.getViewport({ scale: 2.0 });
         const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d');
-        if (!context) continue;
-        
-        canvas.height = viewport.height;
         canvas.width = viewport.width;
-        await page.render({ canvasContext: context, viewport }).promise;
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
-        
-        const result = await worker.recognize(dataUrl);
-        
-        const lines = (result.data.lines || []).map((l: any) => ({
-          text: l.text.trim(),
-          left: (l.bbox.x0 / viewport.width) * 100,
-          top: (l.bbox.y0 / viewport.height) * 100,
-          width: ((l.bbox.x1 - l.bbox.x0) / viewport.width) * 100,
-          height: ((l.bbox.y1 - l.bbox.y0) / viewport.height) * 100,
-        }));
-        
-        setOcrPagesData(prev => ({ ...prev, [i]: lines }));
+        canvas.height = viewport.height;
+        const ctx = canvas.getContext('2d');
+
+        if (ctx) {
+          await page.render({ canvasContext: ctx, viewport }).promise;
+          const ret = await worker.recognize(canvas);
+          
+          const words: OcrWord[] = (ret.data as any).words?.map((w: any) => ({
+            text: w.text,
+            left: (w.bbox.x0 / canvas.width) * 100,
+            top: (w.bbox.y0 / canvas.height) * 100,
+            width: ((w.bbox.x1 - w.bbox.x0) / canvas.width) * 100,
+            height: ((w.bbox.y1 - w.bbox.y0) / canvas.height) * 100,
+          })) || [];
+
+          newOcrData[i] = words;
+        }
       }
-      
+
       await worker.terminate();
-      alert("Tüm belgenin OCR işlemi tamamlandı! Metinleri şu an farenizle eksiksiz seçebilirsiniz. PDF'inizi kalıcı olarak düzenlemek için 'Kaydet' butonuna basabilirsiniz.");
-    } catch (error: any) {
-      console.error("Toplu OCR Error:", error);
-      alert("Toplu OCR işlemi sırasında bir hata oluştu: " + (error.message || String(error)));
+      setOcrPagesData(newOcrData);
+    } catch (e) {
+      console.error('OCR Error:', e);
+      alert('OCR işlemi sırasında bir hata meydana geldi.');
     } finally {
       setIsOcrRunning(false);
       setOcrProgress(null);
     }
-  }, [pdfProxy, numPages, ocrLanguage]);
-
-  // Embed the OCR text physically into the PDF on save
-  const handleSave = async (saveAs = false) => {
-    if (!file) return;
-    setIsSaving(true);
-    try {
-      const arrayBuffer = await file.arrayBuffer();
-      const pdfDoc = await PDFDocument.load(arrayBuffer);
-      
-      // Load Fontkit and font for perfect Turkish support during native embedding
-      pdfDoc.registerFontkit(fontkit);
-      const fontUrl = '/Roboto-Regular.ttf';
-      const fontBytes = await fetch(fontUrl).then(res => res.arrayBuffer());
-      const font = await pdfDoc.embedFont(fontBytes);
-
-      const pages = pdfDoc.getPages();
-      for (const [pageNumStr, lines] of Object.entries(ocrPagesData)) {
-        const pageNum = parseInt(pageNumStr);
-        const page = pages[pageNum - 1];
-        if (!page) continue;
-        const { width, height } = page.getSize();
-        
-        for (const line of lines) {
-          if (!line.text) continue;
-          const pdfX = (line.left / 100) * width;
-          const pdfTopY = (line.top / 100) * height; 
-          const pdfY = height - pdfTopY - (line.height / 100) * height + ((line.height / 100) * height * 0.15); 
-          const fontSize = (line.height / 100) * height * 0.9; 
-          
-          page.drawText(line.text, {
-            x: pdfX,
-            y: pdfY,
-            size: fontSize,
-            font: font,
-            color: rgb(0, 0, 0),
-            opacity: 0, // Invisible text
-          });
-        }
-      }
-      
-      const savedBytes = await pdfDoc.save();
-      const newBlob = new Blob([savedBytes], { type: 'application/pdf' });
-      
-      let handleToUse = fileHandle;
-      if (saveAs || !handleToUse) {
-        if (!('showSaveFilePicker' in window)) {
-           const url = URL.createObjectURL(newBlob);
-           const a = document.createElement('a');
-           a.href = url;
-           a.download = file.name;
-           a.click();
-           setIsSaving(false);
-           return;
-        }
-        handleToUse = await (window as any).showSaveFilePicker({
-          suggestedName: file.name,
-          types: [{ description: 'PDF Dosyası', accept: { 'application/pdf': ['.pdf'] } }]
-        });
-        if (setFileHandle) setFileHandle(handleToUse);
-      }
-      
-      if (handleToUse) {
-        const writable = await handleToUse.createWritable();
-        await writable.write(newBlob);
-        await writable.close();
-        alert("Başarıyla kaydedildi!");
-        if (setFile) {
-          const updatedFile = await handleToUse.getFile();
-          setFile(updatedFile);
-        }
-      }
-    } catch (e: any) {
-      if (e.name !== 'AbortError') {
-         alert('Kaydetme hatası: ' + e.message);
-      }
-    } finally {
-      setIsSaving(false);
-    }
   };
 
-  const handleAddComment = async () => {
+  const savePdfWithAnnotations = async (saveAsNew = false) => {
     if (!file) return;
-    const comment = prompt("PDF'in bu sayfasına eklenecek notu girin:");
-    if (!comment) return;
-
     setIsSaving(true);
     try {
       const arrayBuffer = await file.arrayBuffer();
       const pdfDoc = await PDFDocument.load(arrayBuffer);
-      
       pdfDoc.registerFontkit(fontkit);
-      const fontUrl = '/Roboto-Regular.ttf';
-      const fontBytes = await fetch(fontUrl).then(res => res.arrayBuffer());
-      const font = await pdfDoc.embedFont(fontBytes);
-      
-      const pages = pdfDoc.getPages();
-      const page = pages[pageNumber - 1];
-      if (page) {
-        const { height } = page.getSize();
-        page.drawText('Not: ' + comment, {
-          x: 20,
-          y: height - 40,
-          size: 14,
-          font: font,
-          color: rgb(1, 0, 0)
-        });
-      }
 
-      const savedBytes = await pdfDoc.save();
-      const newBlob = new Blob([savedBytes], { type: 'application/pdf' });
-      
-      let handleToUse = fileHandle;
-      if (!handleToUse) {
-         const url = URL.createObjectURL(newBlob);
-         const a = document.createElement('a');
-         a.href = url;
-         a.download = "Notlu_" + file.name;
-         a.click();
-      } else {
-        const writable = await handleToUse.createWritable();
-        await writable.write(newBlob);
-        await writable.close();
-        alert("Yorum eklendi ve kaydedildi!");
-        if (setFile) {
-          const updatedFile = await handleToUse.getFile();
-          setFile(updatedFile);
+      // Add comments / highlights if any
+      for (const [pageNumStr, words] of Object.entries(ocrPagesData)) {
+        const pNum = parseInt(pageNumStr, 10);
+        if (pNum <= pdfDoc.getPageCount()) {
+          const page = pdfDoc.getPage(pNum - 1);
+          const { width, height } = page.getSize();
+          for (const w of words) {
+            const boxX = (w.left / 100) * width;
+            const boxY = height - ((w.top / 100) * height) - ((w.height / 100) * height);
+            const boxW = (w.width / 100) * width;
+            const boxH = (w.height / 100) * height;
+
+            page.drawRectangle({
+              x: boxX,
+              y: boxY,
+              width: boxW,
+              height: boxH,
+              color: rgb(1, 1, 0),
+              opacity: 0.15,
+            });
+          }
         }
       }
+
+      const pdfBytes = await pdfDoc.save();
+      const blob = new Blob([pdfBytes as any], { type: 'application/pdf' });
+
+      if (saveAsNew || !fileHandle) {
+        if ('showSaveFilePicker' in window) {
+          try {
+            const handle = await (window as any).showSaveFilePicker({
+              suggestedName: `annotated_${file.name}`,
+              types: [{
+                description: 'PDF Document',
+                accept: { 'application/pdf': ['.pdf'] }
+              }]
+            });
+            const writable = await handle.createWritable();
+            await writable.write(blob);
+            await writable.close();
+            if (setFileHandle) setFileHandle(handle);
+            if (setFile) {
+              const newFile = await handle.getFile();
+              setFile(newFile);
+            }
+            alert('Belge başarıyla kaydedildi!');
+            return;
+          } catch (e: any) {
+            if (e.name === 'AbortError') return;
+          }
+        }
+        
+        // Fallback download
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `annotated_${file.name}`;
+        a.click();
+        URL.revokeObjectURL(url);
+        alert('Belge indirildi!');
+      } else {
+        const writable = await fileHandle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        if (setFile) {
+          const updatedFile = await fileHandle.getFile();
+          setFile(updatedFile);
+        }
+        alert('Değişiklikler mevcut dosyaya kaydedildi!');
+      }
     } catch (e: any) {
-      alert("Hata: " + e.message);
+      console.error('Save error:', e);
+      alert('Kaydedilirken hata oluştu: ' + e.message);
     } finally {
       setIsSaving(false);
     }
@@ -378,37 +349,117 @@ export function PDFViewer({ file, setFile, fileHandle, setFileHandle, pageNumber
     );
   };
 
+  // ==========================================
+  // EMPTY STATE: HERO DROPZONE & UPLOAD BUTTON
+  // ==========================================
   if (!file) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-transparent border-r border-white/5">
-        <div className="w-16 h-16 mb-4 rounded-2xl bg-white/5 flex items-center justify-center border border-white/10">
-          <svg className="w-8 h-8 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
+      <div className="flex-1 flex flex-col items-center justify-center p-6 md:p-12 text-center select-none relative overflow-auto">
+        <div 
+          onClick={onSelectFile}
+          className="w-full max-w-2xl p-10 md:p-14 rounded-3xl border-2 border-dashed border-white/15 hover:border-indigo-500/60 bg-gradient-to-b from-white/[0.04] to-transparent hover:bg-indigo-500/[0.04] transition-all duration-300 flex flex-col items-center cursor-pointer group shadow-2xl relative overflow-hidden"
+        >
+          <div className="absolute inset-0 bg-gradient-to-tr from-indigo-500/5 via-transparent to-emerald-500/5 pointer-events-none" />
+
+          <div className="w-24 h-24 mb-6 rounded-3xl bg-indigo-500/10 group-hover:bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 group-hover:scale-110 group-hover:text-indigo-300 transition-all duration-300 shadow-xl shadow-indigo-500/10">
+            {isUploading ? (
+              <Loader2 className="animate-spin text-indigo-400" size={44} />
+            ) : (
+              <Upload size={44} className="group-hover:-translate-y-1 transition-transform" />
+            )}
+          </div>
+
+          <h3 className="text-xl md:text-2xl font-bold text-white mb-2 group-hover:text-indigo-200 transition-colors">
+            {isUploading ? 'Belge Yükleniyor ve Analiz Ediliyor...' : 'Belgenizi Buraya Sürükleyin'}
+          </h3>
+          <p className="text-xs md:text-sm text-slate-400 max-w-lg mb-8 leading-relaxed">
+            veya bilgisayarınızdan bir dosya seçmek için bu alana tıklayın. Google Gemini 2.5 Flash ile anında akıllı soru-cevap, özet ve sayfa referanslı analizler yapın.
+          </p>
+
+          <button
+            type="button"
+            disabled={isUploading}
+            onClick={(e) => { e.stopPropagation(); onSelectFile?.(); }}
+            className="px-8 py-3.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold shadow-lg shadow-indigo-500/25 flex items-center gap-2.5 transition-all transform active:scale-95 disabled:opacity-50"
+          >
+            {isUploading ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+            <span>{isUploading ? 'Yükleniyor...' : 'Belge Yükle / Dosya Seç'}</span>
+          </button>
+
+          {/* Supported Format Badges */}
+          <div className="w-full mt-10 pt-6 border-t border-white/10 flex flex-wrap items-center justify-center gap-2">
+            <span className="text-[11px] font-semibold text-slate-500 mr-2 uppercase tracking-wider">Desteklenen:</span>
+            <span className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/15 text-red-300 border border-red-500/30 flex items-center gap-1.5">
+              📕 PDF
+            </span>
+            <span className="px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1.5">
+              📖 EPUB (E-Kitap)
+            </span>
+            <span className="px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-500/15 text-blue-300 border border-blue-500/30 flex items-center gap-1.5">
+              📘 Word (.docx, .doc)
+            </span>
+            <span className="px-3 py-1.5 rounded-lg text-xs font-medium bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1.5">
+              📝 Markdown / TXT
+            </span>
+            <span className="px-3 py-1.5 rounded-lg text-xs font-medium bg-purple-500/15 text-purple-300 border border-purple-500/30 flex items-center gap-1.5">
+              🖼️ Görseller
+            </span>
+          </div>
         </div>
-        <p className="text-slate-400 font-medium text-sm">Lütfen başlamak için bir belge yükleyin.</p>
       </div>
     );
   }
 
+  // ==========================================
+  // IMAGE PREVIEW
+  // ==========================================
   const isImage = file.type.startsWith('image/');
-
   if (isImage) {
     return (
       <div className="flex-1 flex flex-col h-full relative bg-slate-900/60 p-4">
-        <div className="flex-1 overflow-auto p-4 flex justify-center items-center rounded-xl bg-black/40 border border-white/5 custom-scrollbar">
-          <img src={URL.createObjectURL(file)} alt="Preview" className="max-w-full max-h-full rounded shadow-2xl object-contain" />
+        <div className="h-12 bg-black/30 border-b border-white/10 flex items-center justify-between px-4 shrink-0 rounded-t-xl">
+          <span className="text-xs font-medium text-slate-300 flex items-center gap-2">
+            <span className="px-2 py-0.5 rounded text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/30">Görsel</span>
+            {file.name}
+          </span>
+          <button onClick={onSelectFile} className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1">
+            <Upload size={13} /> Farklı Belge Yükle
+          </button>
+        </div>
+        <div className="flex-1 overflow-auto p-6 flex justify-center items-center rounded-b-xl bg-black/40 border border-white/5 custom-scrollbar">
+          <img src={URL.createObjectURL(file)} alt="Preview" className="max-w-full max-h-full rounded-lg shadow-2xl object-contain" />
         </div>
       </div>
     );
   }
 
+  // ==========================================
+  // PLAIN TEXT & MARKDOWN PREVIEW
+  // ==========================================
   if (textContent !== null) {
     return (
       <div className="flex-1 flex flex-col h-full relative bg-slate-900/60">
-        <div className="flex-1 overflow-auto p-6 md:p-12 custom-scrollbar">
-          <div className="max-w-4xl mx-auto bg-white/5 border border-white/10 rounded-xl p-8 shadow-2xl backdrop-blur-sm">
-            <pre className="text-slate-300 font-mono text-xs md:text-sm whitespace-pre-wrap break-words">
+        <div className="h-12 bg-black/30 border-b border-white/10 flex items-center justify-between px-4 shrink-0">
+          <span className="text-xs font-medium text-slate-300 flex items-center gap-2">
+            <span className="px-2 py-0.5 rounded text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30">Metin</span>
+            {file.name}
+          </span>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1 text-slate-400 text-xs">
+              <button onClick={() => setReaderFontSize(f => Math.max(12, f - 2))} className="px-2 py-1 bg-white/5 hover:bg-white/10 rounded border border-white/10 text-[10px]">A-</button>
+              <button onClick={() => setReaderFontSize(f => Math.min(24, f + 2))} className="px-2 py-1 bg-white/5 hover:bg-white/10 rounded border border-white/10 text-[10px]">A+</button>
+            </div>
+            <button onClick={onSelectFile} className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1">
+              <Upload size={13} /> Değiştir
+            </button>
+          </div>
+        </div>
+        <div className="flex-1 overflow-auto p-6 md:p-12 custom-scrollbar select-text">
+          <div className="max-w-4xl mx-auto bg-white/5 border border-white/10 rounded-2xl p-8 md:p-12 shadow-2xl backdrop-blur-sm">
+            <pre 
+              className="text-slate-300 font-mono whitespace-pre-wrap break-words leading-relaxed select-text"
+              style={{ fontSize: `${readerFontSize}px` }}
+            >
               {textContent}
             </pre>
           </div>
@@ -417,19 +468,47 @@ export function PDFViewer({ file, setFile, fileHandle, setFileHandle, pageNumber
     );
   }
 
-  // Unsupported files but we have extracted content
-  if (file.type !== 'application/pdf' && documentDetails && (documentDetails.extractedHtml || documentDetails.extractedText)) {
+  // ==========================================
+  // EPUB, WORD & EXTRACTED DOCUMENT READER
+  // ==========================================
+  const isEpubOrWord = file.type !== 'application/pdf';
+  if (isEpubOrWord && documentDetails && (documentDetails.extractedHtml || documentDetails.extractedText)) {
+    const isEpub = file.name.toLowerCase().endsWith('.epub');
+    const badgeLabel = isEpub ? 'EPUB E-Kitap' : 'Word Belgesi';
+    const badgeColor = isEpub ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' : 'bg-blue-500/20 text-blue-300 border-blue-500/30';
+
     return (
       <div className="flex-1 flex flex-col h-full bg-slate-900 border-r border-white/5">
-        <div className="h-14 bg-black/20 border-b border-white/5 flex items-center px-4 shrink-0 shadow-sm z-10">
-          <span className="text-xs font-medium text-slate-400">Belge Önizlemesi (Metin Modu)</span>
+        <div className="h-12 bg-black/30 border-b border-white/10 flex items-center justify-between px-4 shrink-0">
+          <div className="flex items-center gap-2 truncate">
+            <span className={`px-2 py-0.5 rounded text-[10px] border font-medium ${badgeColor}`}>
+              {badgeLabel}
+            </span>
+            <span className="text-xs font-semibold text-slate-200 truncate max-w-sm">{file.name}</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1 text-slate-400 text-xs">
+              <button onClick={() => setReaderFontSize(f => Math.max(12, f - 2))} className="px-2 py-1 bg-white/5 hover:bg-white/10 rounded border border-white/10 text-[10px]" title="Yazıyı Küçült">A-</button>
+              <button onClick={() => setReaderFontSize(f => Math.min(26, f + 2))} className="px-2 py-1 bg-white/5 hover:bg-white/10 rounded border border-white/10 text-[10px]" title="Yazıyı Büyüt">A+</button>
+            </div>
+            <button onClick={onSelectFile} className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1">
+              <Upload size={13} /> Değiştir
+            </button>
+          </div>
         </div>
-        <div className="flex-1 overflow-auto p-8 custom-scrollbar">
-          <div className="max-w-3xl mx-auto bg-white text-black p-10 rounded-sm shadow-2xl min-h-[800px]">
+
+        <div className="flex-1 overflow-auto p-4 md:p-10 custom-scrollbar select-text">
+          <div 
+            className="max-w-4xl mx-auto bg-slate-950/80 text-slate-200 p-8 md:p-14 rounded-2xl border border-white/10 shadow-2xl min-h-[800px] leading-relaxed select-text"
+            style={{ fontSize: `${readerFontSize}px` }}
+          >
             {documentDetails.extractedHtml ? (
-              <div className="prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: documentDetails.extractedHtml }} />
+              <div 
+                className="prose prose-invert max-w-none prose-headings:text-indigo-300 prose-a:text-indigo-400 prose-p:leading-relaxed select-text"
+                dangerouslySetInnerHTML={{ __html: documentDetails.extractedHtml }} 
+              />
             ) : (
-              <pre className="font-mono text-sm whitespace-pre-wrap break-words font-sans">
+              <pre className="font-sans whitespace-pre-wrap break-words leading-relaxed select-text">
                 {documentDetails.extractedText}
               </pre>
             )}
@@ -439,127 +518,118 @@ export function PDFViewer({ file, setFile, fileHandle, setFileHandle, pageNumber
     );
   }
 
-  // Unsupported files without content
-  if (file.type !== 'application/pdf') {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-transparent border-r border-white/5">
-        <div className="w-16 h-16 mb-4 rounded-2xl bg-indigo-500/20 flex items-center justify-center border border-indigo-500/30">
-          <FileText className="w-8 h-8 text-indigo-400" />
-        </div>
-        <p className="text-slate-200 font-medium text-sm mb-1">Dosya Yüklendi</p>
-        <p className="text-slate-400 text-xs max-w-sm text-center">
-          Bu dosya türü yapay zeka tarafından analiz edilebilir ancak görsel önizlemesi şu anda desteklenmemektedir. Yapay zeka ile sohbet edebilirsiniz.
-        </p>
-      </div>
-    );
-  }
-
+  // ==========================================
+  // PDF DOCUMENT VIEWER
+  // ==========================================
   return (
     <div className="flex-1 flex flex-col h-full relative">
-      {/* Toolbar */}
-      <div className="h-14 bg-black/20 border-b border-white/5 flex items-center justify-between px-4 shrink-0 shadow-sm z-10 overflow-x-auto custom-scrollbar">
-        <div className="flex items-center space-x-2">
-          <button onClick={handlePrevPage} disabled={pageNumber <= 1} className="p-1.5 hover:bg-white/10 rounded-md disabled:opacity-50 transition-colors text-slate-300 hover:text-white">
-            <ChevronLeft size={18} />
-          </button>
-          <span className="text-xs font-medium text-slate-400 px-2 whitespace-nowrap">
-            Sayfa {pageNumber} / {numPages || '-'}
-          </span>
-          <button onClick={handleNextPage} disabled={pageNumber >= numPages} className="p-1.5 hover:bg-white/10 rounded-md disabled:opacity-50 transition-colors text-slate-300 hover:text-white">
-            <ChevronRight size={18} />
-          </button>
-        </div>
+      {/* Top Controls Toolbar */}
+      <div className="h-12 bg-black/30 border-b border-white/10 flex items-center justify-between px-3 shrink-0 select-none z-20">
         
-        <div className="flex items-center space-x-1 shrink-0">
-          <div className="flex items-center space-x-1 mr-4 bg-white/5 p-1 rounded-lg">
-            <button onClick={() => setViewMode('single')} className={cn("p-1.5 rounded-md transition-colors", viewMode === 'single' ? 'bg-white/20 text-white' : 'text-slate-400 hover:text-white')} title="Tek Sayfa">
-              <FileText size={16} />
+        {/* Left: View Mode & Pagination */}
+        <div className="flex items-center space-x-2">
+          <div className="flex items-center bg-white/5 rounded-lg p-0.5 border border-white/10">
+            <button
+              onClick={() => setViewMode('single')}
+              className={cn("p-1 rounded text-slate-400 hover:text-white transition-colors", viewMode === 'single' && "bg-white/10 text-white")}
+              title="Tek Sayfa Modu"
+            >
+              <LayoutList size={15} />
             </button>
-            <button onClick={() => setViewMode('continuous')} className={cn("p-1.5 rounded-md transition-colors", viewMode === 'continuous' ? 'bg-white/20 text-white' : 'text-slate-400 hover:text-white')} title="Sürekli">
-              <LayoutList size={16} />
-            </button>
-            <button onClick={() => setViewMode('two-page')} className={cn("p-1.5 rounded-md transition-colors", viewMode === 'two-page' ? 'bg-white/20 text-white' : 'text-slate-400 hover:text-white')} title="İki Sayfa">
-              <LayoutGrid size={16} />
+            <button
+              onClick={() => setViewMode('continuous')}
+              className={cn("p-1 rounded text-slate-400 hover:text-white transition-colors", viewMode === 'continuous' && "bg-white/10 text-white")}
+              title="Sürekli Kaydırma Modu"
+            >
+              <LayoutGrid size={15} />
             </button>
           </div>
 
-          <button onClick={handleZoomOut} className="p-1.5 hover:bg-white/10 rounded-md transition-colors text-slate-300 hover:text-white" title="Uzaklaştır">
-            <ZoomOut size={16} />
-          </button>
-          <span className="text-[10px] font-mono text-slate-400 w-10 text-center">{Math.round(scale * 100)}%</span>
-          <button onClick={handleZoomIn} className="p-1.5 hover:bg-white/10 rounded-md transition-colors text-slate-300 hover:text-white" title="Yakınlaştır">
-            <ZoomIn size={16} />
-          </button>
-          <div className="w-px h-5 bg-white/10 mx-2" />
-          
-          <button 
-            onClick={handleAddComment} 
-            disabled={isSaving}
-            className="p-1.5 hover:bg-white/10 rounded-md transition-colors text-slate-300 hover:text-white mr-1" 
-            title="Yorum Ekle"
-          >
-            <MessageSquarePlus size={16} />
-          </button>
-          <button 
-            onClick={() => handleSave(false)} 
-            disabled={isSaving}
-            className="p-1.5 hover:bg-white/10 rounded-md transition-colors text-emerald-400 hover:text-emerald-300 mr-1" 
-            title="Orijinal PDF Üzerine Kaydet"
-          >
-            {isSaving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-          </button>
-          <button 
-            onClick={() => handleSave(true)} 
-            disabled={isSaving}
-            className="p-1.5 hover:bg-white/10 rounded-md transition-colors text-indigo-400 hover:text-indigo-300 mr-4" 
-            title="Farklı Kaydet"
-          >
-            <SaveAll size={16} />
-          </button>
+          <div className="h-4 w-px bg-white/10 mx-1" />
 
-          <form onSubmit={handleSearch} className="flex items-center relative mr-2">
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                if (e.target.value.trim() === '') setSearchResults([]);
-              }}
-              placeholder="Belgede ara..."
-              className="bg-white/5 border border-white/10 text-slate-200 text-xs rounded-l-md px-3 py-1.5 focus:outline-none focus:border-indigo-500 w-28 md:w-40 placeholder:text-slate-500"
-            />
+          {/* Page Controls */}
+          <div className="flex items-center space-x-1">
             <button
-              type="submit"
-              disabled={isSearching || !searchQuery.trim()}
-              className="bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white px-2 py-1.5 rounded-r-md transition-colors"
-              title="Ara"
+              onClick={() => setPageNumber(Math.max(1, pageNumber - 1))}
+              disabled={pageNumber <= 1}
+              className="p-1 rounded text-slate-400 hover:text-white disabled:opacity-30 hover:bg-white/5 transition-colors"
             >
-              {isSearching ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+              <ChevronLeft size={16} />
             </button>
-            {searchResults.length > 0 && (
-              <div className="absolute right-full mr-2 whitespace-nowrap text-[10px] text-slate-400 flex items-center gap-1">
-                {currentSearchIndex + 1} / {searchResults.length}
-                <button type="button" onClick={handleNextSearchResult} className="ml-1 p-1 bg-white/5 hover:bg-white/10 rounded" title="Sonraki Sonuç">
-                  <ChevronRight size={12} />
-                </button>
-              </div>
-            )}
-          </form>
+            <span className="text-xs text-slate-300 font-mono px-1">
+              {pageNumber} / {numPages || '--'}
+            </span>
+            <button
+              onClick={() => setPageNumber(Math.min(numPages || 1, pageNumber + 1))}
+              disabled={numPages ? pageNumber >= numPages : true}
+              className="p-1 rounded text-slate-400 hover:text-white disabled:opacity-30 hover:bg-white/5 transition-colors"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        </div>
+
+        {/* Center: Search inside PDF */}
+        <form onSubmit={handleSearch} className="flex items-center gap-1 bg-white/5 border border-white/10 rounded-lg px-2 py-0.5 max-w-[200px] md:max-w-[280px]">
+          <Search size={13} className="text-slate-400 shrink-0" />
+          <input
+            type="text"
+            placeholder="Belgede ara..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="bg-transparent text-xs text-slate-200 outline-none w-full placeholder:text-slate-500"
+          />
+          {searchResults.length > 0 && (
+            <span className="text-[10px] text-indigo-400 font-mono shrink-0">
+              {currentSearchIndex + 1}/{searchResults.length}
+            </span>
+          )}
+          {searchResults.length > 0 && (
+            <div className="flex items-center">
+              <button type="button" onClick={prevSearchResult} className="p-0.5 text-slate-400 hover:text-white">
+                <ChevronLeft size={12} />
+              </button>
+              <button type="button" onClick={nextSearchResult} className="p-0.5 text-slate-400 hover:text-white">
+                <ChevronRight size={12} />
+              </button>
+            </div>
+          )}
+        </form>
+
+        {/* Right: Zoom & OCR */}
+        <div className="flex items-center space-x-2">
+          <div className="flex items-center bg-white/5 rounded-lg p-0.5 border border-white/10">
+            <button
+              onClick={() => setScale(s => Math.max(0.6, s - 0.15))}
+              className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/5 transition-colors"
+              title="Küçült"
+            >
+              <ZoomOut size={15} />
+            </button>
+            <span className="text-[11px] font-mono px-1.5 text-slate-300">{Math.round(scale * 100)}%</span>
+            <button
+              onClick={() => setScale(s => Math.min(2.5, s + 0.15))}
+              className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/5 transition-colors"
+              title="Büyüt"
+            >
+              <ZoomIn size={15} />
+            </button>
+          </div>
 
           <button 
             onClick={handleOcr} 
             disabled={isOcrRunning}
-            className="flex items-center space-x-1.5 px-2.5 py-1 bg-white/5 border border-white/10 text-slate-300 hover:bg-indigo-500 hover:border-indigo-500 hover:text-white rounded-md transition-colors disabled:opacity-50 text-[10px] font-medium"
+            className="flex items-center space-x-1.5 px-2.5 py-1 bg-white/5 border border-white/10 text-slate-300 hover:bg-indigo-500 hover:border-indigo-500 hover:text-white rounded-lg transition-colors disabled:opacity-50 text-[10px] font-medium"
             title="Taranmış sayfalar için OCR ile metin çıkar"
           >
-            {isOcrRunning ? <Loader2 size={14} className="animate-spin" /> : <ScanText size={14} />}
+            {isOcrRunning ? <Loader2 size={13} className="animate-spin" /> : <ScanText size={13} />}
             <span className="whitespace-nowrap">{ocrProgress ? `OCR (${ocrProgress.current}/${ocrProgress.total})` : 'Tümünü OCR\'la'}</span>
           </button>
         </div>
       </div>
 
       {/* Viewer Area */}
-      <div className="flex-1 overflow-auto p-4 md:p-8 flex justify-center custom-scrollbar relative" ref={viewerRef}>
+      <div className="flex-1 overflow-auto p-4 md:p-8 flex justify-center custom-scrollbar relative select-text" ref={viewerRef}>
         <Document
           file={file}
           onLoadSuccess={onDocumentLoadSuccess}
