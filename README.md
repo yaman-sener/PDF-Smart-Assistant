@@ -32,14 +32,20 @@ Google'ın en gelişmiş **Gemini 2.5 Flash** modelini ve **Google GenAI File AP
 
 ## 🚀 Öne Çıkan Özellikler (Key Features)
 
-- 📄 **Geniş Belge Desteği**: PDF dosyalarının yanı sıra Word (.docx ve .doc) belgelerini otomatik ayrıştırıp analiz eder.
+- 🔑 **İsteğe Bağlı & Esnek API Key Yönetimi**: Programı çalıştırmak için önceden `.env` dosyasına zorunlu anahtar yazmanız gerekmez. Arayüzdeki **Anahtar (Key)** simgesine tıklayarak kendi Gemini API anahtarınızı yapıştırabilir, bağlantıyı test edebilir ve hemen kullanabilirsiniz.
+- 📄 **Geniş Belge Desteği**: PDF dosyalarının yanı sıra Word (.docx ve .doc), Markdown (.md), CSV ve Görsel (.png, .jpg) belgelerini otomatik ayrıştırıp analiz eder.
 - ⚡ **Google Gemini 2.5 Flash Gücü**: Dokümanları Google File API üzerinden doğrudan yapay zeka ile eşleştirerek yüksek hızlı ve derinlemesine yanıtlar üretir.
 - 🔗 **Tıklanabilir Sayfa Referansları ([Sayfa X])**: Yapay zekanın verdiği yanıtlardaki sayfa etiketlerine tıkladığınızda belge otomatik olarak ilgili sayfaya kaydırılır.
 - 🪄 **Akıllı Kayan Araç Çubuğu (Floating Toolbar)**: Belgede herhangi bir metni seçtiğinizde anında beliren menü ile:
   - 📝 **Özetleme (Summarize)**: Seçili bölümün özetini çıkartır.
   - 🌐 **Çeviri (Translate)**: Seçili metni Türkçeye veya İngilizceye çevirir.
   - ✨ **Yeniden Yazma (Rephrase)**: Metni daha akıcı, akademik ve profesyonel bir üslupla düzenler.
-- 🔍 **Gelişmiş Belge Görüntüleyici**: Sayfa zoom (yakınlaştırma/uzaklaştırma), sayfa atlama, metin seçimi ve tam responsive görüntüleme.
+- 🔍 **Gelişmiş Belge Görüntüleyici**: Sayfa zoom (yakınlaştırma/uzaklaştırma), sayfa atlama, metin seçimi ve OCR desteği.
+- 🔒 **Gelişmiş Güvenlik & Bellek Yönetimi**:
+  - API anahtarları yalnızca istemci tarafında (`localStorage`) güvenle tutulur.
+  - 50MB dosya boyutu sınırı ve MIME/uzantı beyaz listesi ile DoS ve zararlı dosya koruması.
+  - Geçici dosyalar işlem bitiminde (`finally` bloğu ile) diskten otomatik silinir.
+  - Sunucu güvenlik başlıkları (`X-Content-Type-Options`, `X-Frame-Options`, `X-XSS-Protection`).
 - 💻 **Masaüstü (.exe) Derleme Desteği**: Bun altyapısıyla tek tıkla taşınabilir bağımsız Windows `.exe` çıktısı alabilme.
 
 ---
@@ -52,16 +58,16 @@ Google'ın en gelişmiş **Gemini 2.5 Flash** modelini ve **Google GenAI File AP
 | **Frontend** | React 18, TypeScript, Vite, Tailwind CSS v4 | Hızlı, reaktif ve modern kullanıcı deneyimi |
 | **PDF Motoru** | `react-pdf`, `pdfjs-dist`, `pdf-lib` | Gelişmiş PDF render ve sayfa manipülasyonu |
 | **Word Ayrıştırma** | `mammoth`, `word-extractor` | .docx ve .doc belgelerinden metin ve HTML çıkarma |
-| **Backend** | Express.js, Multer, CORS | Dosya yükleme ve yapay zeka streaming sunucusu |
+| **Backend** | Express.js, Multer, CORS | Dosya yükleme, güvenlik denetimleri ve streaming sunucusu |
 
 ---
 
 ## ⚙️ Kurulum & Çalıştırma (Getting Started)
 
 ### 📋 Gereksinimler
-- [Node.js](https://nodejs.org/) (v18 veya üzeri önerilir)
+- [Node.js](https://nodejs.org/) (v18 veya üzeri)
 - [Git](https://git-scm.com/)
-- [Google Gemini API Key](https://aistudio.google.com/)
+- [Google Gemini API Key](https://aistudio.google.com/) (İsteğe bağlı: Arayüzden de girilebilir)
 
 ---
 
@@ -78,9 +84,9 @@ cd PDF-Smart-Assistant
 npm install
 ```
 
-### 3️⃣ Ortam Değişkenlerini Ayarlayın
+### 3️⃣ (İsteğe Bağlı) Ortam Değişkenlerini Ayarlayın
 
-Proje kök dizinindeki `.env.example` dosyasını kopyalayarak `.env` oluşturun:
+Dilerseniz `.env.example` dosyasını kopyalayarak `.env` oluşturabilir veya API anahtarınızı doğrudan **uygulama arayüzünden** girebilirsiniz:
 
 ```bash
 # Windows PowerShell
@@ -90,10 +96,9 @@ copy .env.example .env
 cp .env.example .env
 ```
 
-Ardından `.env` dosyasını açıp [Google AI Studio](https://aistudio.google.com/)'dan aldığınız API anahtarınızı girin:
-
 ```env
-GEMINI_API_KEY="AIzaSyYourGeminiApiKeyHere"
+# İsteğe bağlı sunucu anahtarı (Girilmezse arayüzden kullanıcı anahtarı girilebilir)
+GEMINI_API_KEY="your_api_key_here"
 APP_URL="http://localhost:3000"
 NODE_ENV="development"
 ```
@@ -102,19 +107,19 @@ NODE_ENV="development"
 
 ### 4️⃣ Uygulamayı Başlatın
 
-Geliştirme modunda başlatmak için:
-
 ```bash
 npm run dev
 ```
 
 Tarayıcınızda açın: **[http://localhost:3000](http://localhost:3000)**
 
+> 💡 **İpucu:** Sol menüdeki **Anahtar (Key)** simgesine tıklayarak dilediğiniz an Google Gemini API anahtarınızı tanımlayabilir veya değiştirebilirsiniz.
+
 ---
 
 ## 📦 Masaüstü Uygulaması Olarak Derleme (Build .exe)
 
-Projeyi tek bir bağımsız Windows `.exe` dosyası haline getirmek için [Bun](https://bun.sh/) kullanarak derleyebilirsiniz:
+Projeyi tek bir bağımsız Windows `.exe` dosyası haline getirmek için:
 
 ```bash
 npm run build
@@ -129,19 +134,23 @@ Oluşturulan çalıştırılabilir dosya `dist/pdf-smart-assistant.exe` konumund
 
 ```
 pdf-smart-assistant/
-├── assets/                  # Banner, logo ve önizleme görselleri
+├── assets/                  # Banner ve önizleme görselleri
 │   ├── banner.jpg
 │   └── preview.jpg
 ├── src/
 │   ├── components/          # React bileşenleri
+│   │   ├── ApiKeyModal.tsx  # Gemini API anahtarı yönetim modalı
 │   │   ├── ChatPanel.tsx    # AI sohbet ve etkileşim paneli
 │   │   ├── FloatingToolbar.tsx # Metin seçim araç çubuğu
 │   │   └── PDFViewer.tsx    # PDF görüntüleyici ve sayfa kontrolleri
+│   ├── lib/
+│   │   ├── apiKeyStorage.ts # Güvenli API anahtarı yönetimi (localStorage)
+│   │   └── utils.ts
 │   ├── App.tsx              # Ana uygulama düzeni
 │   ├── main.tsx             # React giriş noktası
 │   ├── index.css            # Tailwind stilleri
 │   └── types.ts             # Tip tanımları
-├── server.ts                # Express backend & Gemini API entegrasyonu
+├── server.ts                # Express backend, güvenlik katmanı & Gemini API
 ├── vite.config.ts           # Vite konfigürasyonu
 ├── tsconfig.json            # TypeScript konfigürasyonu
 ├── .env.example             # Örnek ortam değişkenleri
@@ -151,13 +160,13 @@ pdf-smart-assistant/
 
 ---
 
-## 🔑 Ortam Değişkenleri (Environment Variables)
+## 🔒 Güvenlik Özellikleri (Security Enhancements)
 
-| Değişken Adı | Zorunlu mu? | Açıklama |
-| :--- | :---: | :--- |
-| `GEMINI_API_KEY` | **Evet** | Google AI Studio üzerinden alınan Gemini API anahtarı. |
-| `APP_URL` | Hayır | Uygulamanın çalıştığı ana URL (Varsayılan: `http://localhost:3000`). |
-| `NODE_ENV` | Hayır | `development` veya `production` modu. |
+- **İstemci Tarafı Anahtar Güvenliği**: Kullanıcıların girdiği API anahtarları yalnızca kendi tarayıcılarında saklanır ve doğrudan Gemini API istek başlığı (`x-gemini-api-key`) ile iletilir.
+- **Dosya Yükleme Sınırları**: 50MB dosya boyutu limiti ve MIME/uzantı doğrulama filtresi.
+- **Otomatik Geçici Dosya Temizliği**: Yüklenen ve ayrıştırılan belgeler işlem tamamlandığında veya hata durumunda `finally` bloğu ile sunucu diskinden anında temizlenir.
+- **HTTP Güvenlik Başlıkları**: XSS, MIME-sniffing ve clickjacking saldırılarına karşı `X-Content-Type-Options`, `X-Frame-Options`, `X-XSS-Protection` başlıkları devrededir.
+- **Hata Gizleme (Error Sanitization)**: Sunucu iç dosya yolları veya hassas hata çıktıları istemciye sızdırılmaz.
 
 ---
 

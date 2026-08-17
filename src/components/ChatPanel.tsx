@@ -1,9 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, Bot, User, X, Sparkles, Download } from 'lucide-react';
+import { Send, Loader2, Bot, X, Sparkles, Download, Key, ShieldCheck, AlertCircle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Message, DocumentDetails } from '../types';
-import { cn } from '../lib/utils';
 import { jsPDF } from 'jspdf';
+import { getApiHeaders } from '../lib/apiKeyStorage';
 
 interface ChatPanelProps {
   document: DocumentDetails | null;
@@ -13,9 +13,21 @@ interface ChatPanelProps {
   isUploading: boolean;
   ocrLanguage: string;
   setOcrLanguage: (lang: string) => void;
+  onOpenApiKeyModal?: () => void;
+  isKeyConfigured?: boolean;
 }
 
-export function ChatPanel({ document, onPageClick, actionState, onCloseAction, isUploading, ocrLanguage, setOcrLanguage }: ChatPanelProps) {
+export function ChatPanel({
+  document,
+  onPageClick,
+  actionState,
+  onCloseAction,
+  isUploading,
+  ocrLanguage,
+  setOcrLanguage,
+  onOpenApiKeyModal,
+  isKeyConfigured = true
+}: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([
     { id: '1', role: 'model', text: 'Merhaba! Ben PDF Asistanınız. Bana belgeyle ilgili sorular sorabilirsiniz.' }
   ]);
@@ -47,9 +59,10 @@ export function ChatPanel({ document, onPageClick, actionState, onCloseAction, i
     setMessages(prev => [...prev, { id: modelMessageId, role: 'model', text: '' }]);
 
     try {
+      const headers = getApiHeaders({ 'Content-Type': 'application/json' });
       const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           documentUri: document.uri,
           mimeType: document.mimeType,
@@ -58,10 +71,15 @@ export function ChatPanel({ document, onPageClick, actionState, onCloseAction, i
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Server returned ${response.status}: ${errorText}`);
+        const errorData = await response.json().catch(() => ({}));
+        if (response.status === 401 || errorData.error === 'GEMINI_API_KEY_REQUIRED') {
+          if (onOpenApiKeyModal) onOpenApiKeyModal();
+          throw new Error('Gemini API anahtarı gereklidir. Lütfen API anahtarınızı girin.');
+        }
+        throw new Error(errorData.error || errorData.message || `Sunucu hatası: ${response.status}`);
       }
-      if (!response.body) throw new Error('No readable stream');
+
+      if (!response.body) throw new Error('Yanıt akışı bulunamadı.');
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -70,16 +88,17 @@ export function ChatPanel({ document, onPageClick, actionState, onCloseAction, i
       while (!done) {
         const { value, done: doneReading } = await reader.read();
         done = doneReading;
-        const chunkValue = decoder.decode(value, { stream: true });
-        
-        setMessages(prev => prev.map(msg => 
-          msg.id === modelMessageId ? { ...msg, text: msg.text + chunkValue } : msg
-        ));
+        if (value) {
+          const chunkValue = decoder.decode(value, { stream: true });
+          setMessages(prev => prev.map(msg => 
+            msg.id === modelMessageId ? { ...msg, text: msg.text + chunkValue } : msg
+          ));
+        }
       }
     } catch (error: any) {
       console.error('Chat error:', error);
       setMessages(prev => prev.map(msg => 
-        msg.id === modelMessageId ? { ...msg, text: `Üzgünüm, bir hata oluştu. Detay: ${error.message}` } : msg
+        msg.id === modelMessageId ? { ...msg, text: `⚠️ Hata: ${error.message}` } : msg
       ));
     } finally {
       setIsLoading(false);
@@ -99,7 +118,7 @@ export function ChatPanel({ document, onPageClick, actionState, onCloseAction, i
               return (
                 <button 
                   onClick={(e) => { e.preventDefault(); onPageClick(pageNum); }}
-                  className="inline-flex items-center mx-1 px-1 py-0.5 rounded border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 text-[10px] font-semibold hover:bg-indigo-500/20 transition-colors"
+                  className="inline-flex items-center mx-1 px-1.5 py-0.5 rounded-md border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 text-[10px] font-semibold hover:bg-indigo-500/20 transition-colors"
                 >
                   Sayfa {pageNum}
                 </button>
@@ -117,7 +136,6 @@ export function ChatPanel({ document, onPageClick, actionState, onCloseAction, i
   const exportAsMarkdown = async () => {
     if (!actionState?.result) return;
     
-    // Save As if supported
     if ('showSaveFilePicker' in window) {
       try {
         const handle = await (window as any).showSaveFilePicker({
@@ -132,15 +150,11 @@ export function ChatPanel({ document, onPageClick, actionState, onCloseAction, i
         await writable.close();
         return;
       } catch (e) {
-        // user cancelled or error, fallback or do nothing
-        if ((e as Error).name !== 'AbortError') {
-          console.error(e);
-        }
+        if ((e as Error).name !== 'AbortError') console.error(e);
         return;
       }
     }
 
-    // Fallback normal save
     const blob = new Blob([actionState.result], { type: 'text/markdown' });
     const url = URL.createObjectURL(blob);
     const a = window.document.createElement('a');
@@ -175,14 +189,11 @@ export function ChatPanel({ document, onPageClick, actionState, onCloseAction, i
         await writable.close();
         return;
       } catch (e) {
-        if ((e as Error).name !== 'AbortError') {
-          console.error(e);
-        }
+        if ((e as Error).name !== 'AbortError') console.error(e);
         return;
       }
     }
     
-    // Fallback normal save
     doc.save("ai_export.pdf");
   };
 
@@ -196,7 +207,18 @@ export function ChatPanel({ document, onPageClick, actionState, onCloseAction, i
             <Bot size={16} />
             AI ASİSTAN
           </h2>
-          <div className="px-2 py-0.5 bg-indigo-500/10 border border-indigo-500/30 rounded text-[9px] text-indigo-300 tracking-wider">SECURE VAULT</div>
+          <button
+            onClick={onOpenApiKeyModal}
+            className={`px-2 py-1 rounded-lg text-[10px] flex items-center gap-1.5 border transition-all ${
+              isKeyConfigured
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20'
+                : 'bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/20 animate-pulse'
+            }`}
+            title="Gemini API Anahtarı Ayarları"
+          >
+            <Key size={11} />
+            <span>{isKeyConfigured ? 'API AKTİF' : 'KEY GİR'}</span>
+          </button>
         </div>
         
         <div className="flex items-center justify-between bg-black/20 p-2 rounded-lg border border-white/5">
@@ -221,6 +243,23 @@ export function ChatPanel({ document, onPageClick, actionState, onCloseAction, i
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+        {!isKeyConfigured && (
+          <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 text-xs text-amber-200 space-y-2">
+            <div className="flex items-center gap-1.5 font-semibold text-amber-300">
+              <AlertCircle size={14} /> Gemini API Anahtarı Gerekli
+            </div>
+            <p className="text-[11px] text-amber-300/80 leading-tight">
+              Belgeyle sohbet etmek, özetleme ve çeviri yapmak için API anahtarınızı tanımlayın.
+            </p>
+            <button
+              onClick={onOpenApiKeyModal}
+              className="w-full py-1.5 px-3 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-lg text-[10px] transition-colors"
+            >
+              API Anahtarı Ekle
+            </button>
+          </div>
+        )}
+
         {isUploading && (
           <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-xl p-3 flex flex-col items-center justify-center text-center shadow-inner">
             <Loader2 size={24} className="animate-spin text-indigo-400 mb-2" />
