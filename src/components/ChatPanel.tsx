@@ -209,15 +209,15 @@ export function ChatPanel({
           </h2>
           <button
             onClick={onOpenApiKeyModal}
-            className={`px-2 py-1 rounded-lg text-[10px] flex items-center gap-1.5 border transition-all ${
+            className={`px-2.5 py-1 rounded-lg text-[10px] font-semibold flex items-center gap-1.5 border transition-all ${
               isKeyConfigured
-                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20'
-                : 'bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/20 animate-pulse'
+                ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/25'
+                : 'bg-amber-500/15 border-amber-500/30 text-amber-300 hover:bg-amber-500/25 animate-pulse'
             }`}
             title="Gemini API Anahtarı Ayarları"
           >
-            <Key size={11} />
-            <span>{isKeyConfigured ? 'API AKTİF' : 'KEY GİR'}</span>
+            <Key size={12} className={isKeyConfigured ? 'text-emerald-400' : 'text-amber-400'} />
+            <span>{isKeyConfigured ? 'API AKTİF' : 'API KEY GEREKLİ'}</span>
           </button>
         </div>
         

@@ -8,7 +8,8 @@
     "dev": "tsx server.ts",
     "build": "vite build",
     "start": "node server.ts",
-    "build:exe": "npx bun build ./server.ts --compile --define process.env.NODE_ENV='\"production\"' --outfile dist/pdf-smart-assistant.exe"
+    "build:exe": "npx bun build ./server.ts --compile --define process.env.NODE_ENV='\"production\"' --outfile dist/pdf-smart-assistant.exe",
+    "shortcut": "powershell -ExecutionPolicy Bypass -File scripts/create-shortcut.ps1"
   },
   "keywords": [
     "pdf",

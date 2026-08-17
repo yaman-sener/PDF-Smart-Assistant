@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Key, Eye, EyeOff, CheckCircle2, AlertCircle, ExternalLink, Trash2, Loader2, X, ShieldCheck, Save, Check } from 'lucide-react';
-import { getStoredApiKey, setStoredApiKey, removeStoredApiKey } from '../lib/apiKeyStorage';
+import { Key, Eye, EyeOff, CheckCircle2, AlertCircle, ExternalLink, Trash2, Loader2, X, ShieldCheck, Save } from 'lucide-react';
+import { getStoredApiKey, setStoredApiKey, removeStoredApiKey, isValidApiKey } from '../lib/apiKeyStorage';
 
 interface ApiKeyModalProps {
   isOpen: boolean;
@@ -39,6 +39,14 @@ export function ApiKeyModal({ isOpen, onClose, hasServerApiKey = false }: ApiKey
       return;
     }
 
+    if (!isValidApiKey(trimmed)) {
+      setFeedbackMessage({
+        type: 'error',
+        text: 'Geçersiz API Anahtarı! Lütfen Google AI Studio\'dan aldığınız geçerli anahtarı girin (AIzaSy... formatında olmalıdır).'
+      });
+      return;
+    }
+
     setIsSaving(true);
     try {
       await setStoredApiKey(trimmed, persistOnDisk);
@@ -72,8 +80,8 @@ export function ApiKeyModal({ isOpen, onClose, hasServerApiKey = false }: ApiKey
 
   const handleTestKey = async () => {
     const keyToTest = apiKey.trim() || getStoredApiKey();
-    if (!keyToTest && !hasServerApiKey) {
-      setTestState({ status: 'error', message: 'Test etmek için bir API anahtarı giriniz.' });
+    if (!isValidApiKey(keyToTest) && !hasServerApiKey) {
+      setTestState({ status: 'error', message: 'Test etmek için lütfen geçerli bir Gemini API anahtarı girin.' });
       return;
     }
 
@@ -81,7 +89,7 @@ export function ApiKeyModal({ isOpen, onClose, hasServerApiKey = false }: ApiKey
 
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (keyToTest) {
+      if (isValidApiKey(keyToTest)) {
         headers['x-gemini-api-key'] = keyToTest;
       }
 
@@ -92,7 +100,7 @@ export function ApiKeyModal({ isOpen, onClose, hasServerApiKey = false }: ApiKey
 
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.success) {
-        setTestState({ status: 'success', message: 'Bağlantı Başarılı! Gemini API anahtarınız aktif ve çalışıyor.' });
+        setTestState({ status: 'success', message: 'Bağlantı Başarılı! Gemini 2.5 Flash aktif ve çalışıyor.' });
       } else {
         setTestState({ status: 'error', message: data.error || data.message || 'API anahtarı doğrulanamadı.' });
       }
@@ -101,7 +109,7 @@ export function ApiKeyModal({ isOpen, onClose, hasServerApiKey = false }: ApiKey
     }
   };
 
-  const hasStoredKey = Boolean(getStoredApiKey());
+  const hasStoredKey = isValidApiKey(getStoredApiKey());
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-in fade-in duration-200">
@@ -140,17 +148,17 @@ export function ApiKeyModal({ isOpen, onClose, hasServerApiKey = false }: ApiKey
             <div className="text-[11px] leading-relaxed">
               {hasStoredKey ? (
                 <div>
-                  <strong>Kişisel API Anahtarınız Kayıtlı ve Aktif.</strong>
+                  <strong className="text-emerald-400 font-semibold">Kişisel API Anahtarınız Kayıtlı ve Aktif.</strong>
                   <p className="text-emerald-300/80 mt-0.5">Programı tekrar açtığınızda otomatik olarak kullanılacaktır.</p>
                 </div>
               ) : hasServerApiKey ? (
                 <div>
-                  <strong>Sunucu Anahtarı Hazır.</strong>
+                  <strong className="text-indigo-400 font-semibold">Sunucu Anahtarı Hazır.</strong>
                   <p className="text-indigo-300/80 mt-0.5">Sistemde önceden tanımlanmış bir anahtar var. İsterseniz kendi anahtarınızı girerek değiştirebilirsiniz.</p>
                 </div>
               ) : (
                 <div>
-                  <strong>API Anahtarı Tanımlanmamış.</strong>
+                  <strong className="text-amber-400 font-semibold">API Anahtarı Tanımlanmamış.</strong>
                   <p className="text-amber-300/80 mt-0.5">Belgelerle sohbet, özetleme ve çeviri için lütfen bir Gemini API anahtarı girin.</p>
                 </div>
               )}
@@ -235,7 +243,7 @@ export function ApiKeyModal({ isOpen, onClose, hasServerApiKey = false }: ApiKey
 
           {/* Privacy Note */}
           <p className="text-[10px] text-slate-500 leading-relaxed">
-            🔒 <strong>Güvenlik:</strong> API anahtarınız yalnızca sizin bilgisayarınızda saklanır ve yalnızca doğrudan Gemini API isteklerinde kullanılır. Üçüncü taraflarla kesinlikle paylaşılmaz.
+            🔒 <strong>Güvenlik:</strong> API anahtarınız yalnızca sizin bilgisayarınızda saklanır ve doğrudan Gemini API isteklerinde kullanılır. Üçüncü taraflarla kesinlikle paylaşılmaz.
           </p>
         </div>
 

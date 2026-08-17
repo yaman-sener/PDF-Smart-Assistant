@@ -11,6 +11,26 @@ import mammoth from 'mammoth';
 import WordExtractor from 'word-extractor';
 import { fileURLToPath } from 'url';
 
+// Helper: Strictly validate if an API key is real and not a dummy placeholder
+export function isValidApiKey(key: string | undefined | null): boolean {
+  if (!key || typeof key !== 'string') return false;
+  const trimmed = key.trim();
+  if (trimmed.length < 20) return false;
+  const lower = trimmed.toLowerCase();
+  if (
+    lower.includes('your_gemini_api_key') ||
+    lower.includes('your_api_key') ||
+    lower.includes('my_gemini_api_key') ||
+    lower.includes('placeholder') ||
+    lower.includes('aizasy...') ||
+    lower.includes('test_key') ||
+    lower === 'aizasy'
+  ) {
+    return false;
+  }
+  return true;
+}
+
 // Load .env file manually if it exists
 try {
   const envPath = path.join(process.cwd(), '.env');
@@ -41,7 +61,7 @@ function loadCachedDiskApiKey(): string {
   try {
     if (fs.existsSync(USER_KEY_FILE)) {
       const data = JSON.parse(fs.readFileSync(USER_KEY_FILE, 'utf-8'));
-      if (data && typeof data.apiKey === 'string' && data.apiKey.trim().length > 0) {
+      if (data && typeof data.apiKey === 'string' && isValidApiKey(data.apiKey)) {
         cachedDiskApiKey = data.apiKey.trim();
         return cachedDiskApiKey;
       }
@@ -55,6 +75,7 @@ function loadCachedDiskApiKey(): string {
 
 function saveCachedDiskApiKey(apiKey: string): void {
   try {
+    if (!isValidApiKey(apiKey)) return;
     if (!fs.existsSync(USER_CONFIG_DIR)) {
       fs.mkdirSync(USER_CONFIG_DIR, { recursive: true });
     }
@@ -152,13 +173,17 @@ function maskApiKey(key: string): string {
 
 /**
  * Resolves GoogleGenAI client from:
- * 1. Request header 'x-gemini-api-key'
+ * 1. Request header 'x-gemini-api-key' (if valid non-placeholder)
  * 2. Cached disk key in ~/.pdf-smart-assistant/cached_key.json
- * 3. process.env.GEMINI_API_KEY
+ * 3. process.env.GEMINI_API_KEY (if valid non-placeholder)
  */
 function resolveAiClient(req: Request): GoogleGenAI {
   const customKey = (req.headers['x-gemini-api-key'] as string | undefined)?.trim();
-  const apiKey = customKey || cachedDiskApiKey || process.env.GEMINI_API_KEY?.trim();
+  const validCustomKey = isValidApiKey(customKey) ? customKey : null;
+  const validDiskKey = isValidApiKey(cachedDiskApiKey) ? cachedDiskApiKey : null;
+  const validEnvKey = isValidApiKey(process.env.GEMINI_API_KEY) ? process.env.GEMINI_API_KEY?.trim() : null;
+
+  const apiKey = validCustomKey || validDiskKey || validEnvKey;
 
   if (!apiKey) {
     const error: any = new Error('GEMINI_API_KEY_REQUIRED');
@@ -166,17 +191,9 @@ function resolveAiClient(req: Request): GoogleGenAI {
     throw error;
   }
 
-  // Basic API key format sanity check
-  if (apiKey.length < 10 || apiKey.length > 256 || /[\r\n\t]/.test(apiKey)) {
-    const error: any = new Error('INVALID_GEMINI_API_KEY');
-    error.status = 400;
-    throw error;
-  }
-
   let client = clientCache.get(apiKey);
   if (!client) {
     client = new GoogleGenAI({ apiKey });
-    // Limit cache size to 50 active clients
     if (clientCache.size > 50) {
       const firstKey = clientCache.keys().next().value;
       if (firstKey) clientCache.delete(firstKey);
@@ -188,14 +205,16 @@ function resolveAiClient(req: Request): GoogleGenAI {
 
 // API Route: Check server configuration, cached keys & health
 app.get('/api/config', (req: Request, res: Response) => {
-  const hasEnvKey = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 0);
-  const hasCachedDiskKey = Boolean(cachedDiskApiKey && cachedDiskApiKey.length > 0);
+  const hasEnvKey = isValidApiKey(process.env.GEMINI_API_KEY);
+  const hasDiskKey = isValidApiKey(cachedDiskApiKey);
+  const activeKey = hasDiskKey ? cachedDiskApiKey : (hasEnvKey ? (process.env.GEMINI_API_KEY || '') : '');
   
   res.json({
     hasServerApiKey: hasEnvKey,
-    hasCachedDiskKey: hasCachedDiskKey,
-    cachedKeyMasked: maskApiKey(cachedDiskApiKey || process.env.GEMINI_API_KEY || ''),
-    cachedKey: cachedDiskApiKey || '', // For auto-hydrating frontend localStorage on new startup
+    hasCachedDiskKey: hasDiskKey,
+    hasAnyValidKey: Boolean(activeKey),
+    cachedKeyMasked: activeKey ? maskApiKey(activeKey) : '',
+    cachedKey: hasDiskKey ? cachedDiskApiKey : '',
     maxUploadSizeMB: 50
   });
 });
@@ -203,8 +222,8 @@ app.get('/api/config', (req: Request, res: Response) => {
 // API Route: Save & cache API key persistently on machine
 app.post('/api/key/save', (req: Request, res: Response) => {
   const { apiKey } = req.body;
-  if (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length < 10) {
-    return res.status(400).json({ error: 'Geçersiz API anahtarı formatı.' });
+  if (!isValidApiKey(apiKey)) {
+    return res.status(400).json({ error: 'Geçersiz API anahtarı. Lütfen geçerli bir Google Gemini API anahtarı girin.' });
   }
 
   saveCachedDiskApiKey(apiKey.trim());
@@ -224,23 +243,28 @@ app.post('/api/key/remove', (req: Request, res: Response) => {
   });
 });
 
-// API Route: Test API key validity
+// API Route: Test API key validity against Gemini 2.5 Flash
 app.post('/api/test-key', async (req: Request, res: Response) => {
   try {
+    const customKey = (req.headers['x-gemini-api-key'] as string | undefined)?.trim();
+    if (customKey && !isValidApiKey(customKey)) {
+      return res.status(400).json({ error: 'Geçersiz API anahtarı formatı. Lütfen Google AI Studio\'dan aldığınız anahtarı yapıştırın.' });
+    }
+
     const aiClient = resolveAiClient(req);
     const result = await aiClient.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: 'Ping',
     });
     if (result) {
-      return res.json({ success: true, message: 'API Anahtarı geçerli ve çalışıyor.' });
+      return res.json({ success: true, message: 'Bağlantı Başarılı! Gemini 2.5 Flash ile iletişim kuruldu.' });
     }
     return res.status(400).json({ success: false, message: 'API yanıt vermedi.' });
   } catch (error: any) {
     if (error.message === 'GEMINI_API_KEY_REQUIRED') {
-      return res.status(401).json({ error: 'API anahtarı bulunamadı.' });
+      return res.status(401).json({ error: 'API anahtarı girilmedi veya geçersiz.' });
     }
-    return res.status(400).json({ error: 'API anahtarı geçersiz veya yetersiz: ' + (error.message || 'Bilinmeyen hata') });
+    return res.status(400).json({ error: 'API anahtarı doğrulanamadı: ' + (error.message || 'Geçersiz anahtar') });
   }
 });
 
