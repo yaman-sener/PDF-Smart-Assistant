@@ -1,0 +1,6 @@
+{
+  "name": "PDF Smart Assistant",
+  "description": "A powerful PDF viewer with AI chat, OCR, translation, and document summarization capabilities.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
