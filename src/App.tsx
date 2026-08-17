@@ -5,7 +5,7 @@ import { ChatPanel } from './components/ChatPanel';
 import { FloatingToolbar } from './components/FloatingToolbar';
 import { ApiKeyModal } from './components/ApiKeyModal';
 import { DocumentDetails, HighlightRect } from './types';
-import { getStoredApiKey, getApiHeaders } from './lib/apiKeyStorage';
+import { getStoredApiKey, getApiHeaders, syncApiKeyWithBackend } from './lib/apiKeyStorage';
 
 export default function App() {
   const [file, setFile] = useState<File | null>(null);
@@ -23,13 +23,22 @@ export default function App() {
 
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
-  // Check server configuration & listen to key changes
+  // Check server configuration, sync cached keys & listen to key changes
   useEffect(() => {
+    syncApiKeyWithBackend()
+      .then((activeKey) => {
+        setHasUserApiKey(Boolean(activeKey));
+      })
+      .catch(() => {});
+
     fetch('/api/config')
       .then(res => res.json())
       .then(data => {
         if (data && typeof data.hasServerApiKey === 'boolean') {
           setHasServerApiKey(data.hasServerApiKey);
+        }
+        if (data?.hasCachedDiskKey || data?.cachedKey) {
+          setHasUserApiKey(true);
         }
       })
       .catch(() => {});

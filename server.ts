@@ -31,6 +31,54 @@ try {
   console.error('Error reading .env file', e);
 }
 
+// Persistent user config folder for caching API keys across program sessions
+const USER_CONFIG_DIR = path.join(os.homedir(), '.pdf-smart-assistant');
+const USER_KEY_FILE = path.join(USER_CONFIG_DIR, 'cached_key.json');
+
+let cachedDiskApiKey = '';
+
+function loadCachedDiskApiKey(): string {
+  try {
+    if (fs.existsSync(USER_KEY_FILE)) {
+      const data = JSON.parse(fs.readFileSync(USER_KEY_FILE, 'utf-8'));
+      if (data && typeof data.apiKey === 'string' && data.apiKey.trim().length > 0) {
+        cachedDiskApiKey = data.apiKey.trim();
+        return cachedDiskApiKey;
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load cached API key from disk:', e);
+  }
+  cachedDiskApiKey = '';
+  return '';
+}
+
+function saveCachedDiskApiKey(apiKey: string): void {
+  try {
+    if (!fs.existsSync(USER_CONFIG_DIR)) {
+      fs.mkdirSync(USER_CONFIG_DIR, { recursive: true });
+    }
+    fs.writeFileSync(USER_KEY_FILE, JSON.stringify({ apiKey: apiKey.trim(), updatedAt: new Date().toISOString() }), 'utf-8');
+    cachedDiskApiKey = apiKey.trim();
+  } catch (e) {
+    console.error('Failed to save cached API key to disk:', e);
+  }
+}
+
+function removeCachedDiskApiKey(): void {
+  try {
+    if (fs.existsSync(USER_KEY_FILE)) {
+      fs.unlinkSync(USER_KEY_FILE);
+    }
+    cachedDiskApiKey = '';
+  } catch (e) {
+    console.error('Failed to remove cached API key from disk:', e);
+  }
+}
+
+// Initialize cached key from disk on startup
+loadCachedDiskApiKey();
+
 // Initialize Express
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -95,11 +143,22 @@ const upload = multer({
 const clientCache = new Map<string, GoogleGenAI>();
 
 /**
- * Resolves GoogleGenAI client from request header or environment variable
+ * Helper to mask an API key for safe UI display (e.g. AIzaSy...xxxx)
+ */
+function maskApiKey(key: string): string {
+  if (!key || key.length < 8) return '';
+  return key.slice(0, 6) + '...' + key.slice(-4);
+}
+
+/**
+ * Resolves GoogleGenAI client from:
+ * 1. Request header 'x-gemini-api-key'
+ * 2. Cached disk key in ~/.pdf-smart-assistant/cached_key.json
+ * 3. process.env.GEMINI_API_KEY
  */
 function resolveAiClient(req: Request): GoogleGenAI {
   const customKey = (req.headers['x-gemini-api-key'] as string | undefined)?.trim();
-  const apiKey = customKey || process.env.GEMINI_API_KEY?.trim();
+  const apiKey = customKey || cachedDiskApiKey || process.env.GEMINI_API_KEY?.trim();
 
   if (!apiKey) {
     const error: any = new Error('GEMINI_API_KEY_REQUIRED');
@@ -127,11 +186,41 @@ function resolveAiClient(req: Request): GoogleGenAI {
   return client;
 }
 
-// API Route: Check server configuration & health
+// API Route: Check server configuration, cached keys & health
 app.get('/api/config', (req: Request, res: Response) => {
+  const hasEnvKey = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 0);
+  const hasCachedDiskKey = Boolean(cachedDiskApiKey && cachedDiskApiKey.length > 0);
+  
   res.json({
-    hasServerApiKey: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 0),
+    hasServerApiKey: hasEnvKey,
+    hasCachedDiskKey: hasCachedDiskKey,
+    cachedKeyMasked: maskApiKey(cachedDiskApiKey || process.env.GEMINI_API_KEY || ''),
+    cachedKey: cachedDiskApiKey || '', // For auto-hydrating frontend localStorage on new startup
     maxUploadSizeMB: 50
+  });
+});
+
+// API Route: Save & cache API key persistently on machine
+app.post('/api/key/save', (req: Request, res: Response) => {
+  const { apiKey } = req.body;
+  if (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length < 10) {
+    return res.status(400).json({ error: 'Geçersiz API anahtarı formatı.' });
+  }
+
+  saveCachedDiskApiKey(apiKey.trim());
+  res.json({
+    success: true,
+    message: 'API anahtarı kalıcı olarak kaydedildi.',
+    maskedKey: maskApiKey(apiKey.trim())
+  });
+});
+
+// API Route: Remove cached API key from machine
+app.post('/api/key/remove', (req: Request, res: Response) => {
+  removeCachedDiskApiKey();
+  res.json({
+    success: true,
+    message: 'Kaydedilmiş API anahtarı başarıyla kaldırıldı.'
   });
 });
 
@@ -395,6 +484,7 @@ export async function startServer() {
       console.log(`\n========================================`);
       console.log(`📑 PDF Smart Assistant is running!`);
       console.log(`🌐 Local URL: http://localhost:${PORT}`);
+      console.log(`💾 Persistent Key Cache: ${USER_KEY_FILE}`);
       console.log(`🔒 Security headers & validation enabled`);
       console.log(`========================================\n`);
 

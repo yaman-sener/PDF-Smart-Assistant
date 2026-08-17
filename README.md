@@ -32,7 +32,7 @@ Google'ın en gelişmiş **Gemini 2.5 Flash** modelini ve **Google GenAI File AP
 
 ## 🚀 Öne Çıkan Özellikler (Key Features)
 
-- 🔑 **İsteğe Bağlı & Esnek API Key Yönetimi**: Programı çalıştırmak için önceden `.env` dosyasına zorunlu anahtar yazmanız gerekmez. Arayüzdeki **Anahtar (Key)** simgesine tıklayarak kendi Gemini API anahtarınızı yapıştırabilir, bağlantıyı test edebilir ve hemen kullanabilirsiniz.
+- 🔑 **Kalıcı & Güvenli API Key Önbellekleme (Caching & Removal)**: Programı çalıştırmak için `.env` dosyası zorunluluğu yoktur. Arayüzden yapıştırdığınız Gemini API anahtarı otomatik olarak bu cihazda kalıcı olarak önbelleğe alınır (hatırlanır). Programı veya tarayıcıyı kapatıp tekrar açtığınızda anahtarınız hazır bekler. İstediğiniz an tek tıkla **"Anahtarı Kaldır (Sil)"** butonuna basarak tüm kaydı sıfırlayabilirsiniz.
 - 📄 **Geniş Belge Desteği**: PDF dosyalarının yanı sıra Word (.docx ve .doc), Markdown (.md), CSV ve Görsel (.png, .jpg) belgelerini otomatik ayrıştırıp analiz eder.
 - ⚡ **Google Gemini 2.5 Flash Gücü**: Dokümanları Google File API üzerinden doğrudan yapay zeka ile eşleştirerek yüksek hızlı ve derinlemesine yanıtlar üretir.
 - 🔗 **Tıklanabilir Sayfa Referansları ([Sayfa X])**: Yapay zekanın verdiği yanıtlardaki sayfa etiketlerine tıkladığınızda belge otomatik olarak ilgili sayfaya kaydırılır.
